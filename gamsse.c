@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "gmomcc.h"
 #include "gevmcc.h"
@@ -24,6 +25,72 @@ void printjoblist(
    pclose(out);
 }
 
+/* returns job id */
+static
+char* submitjob(
+   gevHandle_t gev,
+   char* apikey
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+   char* loc;
+   char* end;
+
+/*
+   sprintf(buffer, "curl -d \"{\\\"options\\\":{},\\\"files\\\":[{\\\"name\\\": \\\"problem.lp\\\"}]}\" -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+   gevLog(gev, buffer);
+   pclose(out);
+*/
+   sprintf(buffer, "{\"job_id\":\"014259e50e8e7204b183ef6eb40aea86f8ad1eab\"}");
+
+   loc = strstr(buffer, "job_id\"");
+   if( loc == NULL )
+      return NULL;
+   loc += 7;  /* skip job_id" */
+
+   loc = strstr(loc, "\"");  /* find quote that starts job id */
+   if( loc == NULL )
+      return NULL;
+   ++loc; /* skip initial quote */
+
+   end = strstr(loc, "\""); /* find closing quote */
+   if( end == NULL )
+      return NULL;
+   *end = '\0';
+
+   return strdup(loc);
+}
+
+/* upload problem file */
+static
+void uploadfile(
+   gevHandle_t gev,
+   char* lpfilename,
+   char* apikey,
+   char* jobid
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+   char* loc;
+   char* end;
+
+   sprintf(buffer, "curl -X PUT -F file=@%s -H 'Authorization: Bearer %s' https://solve.satalia.com/api/v1alpha/jobs/%s/files/problem.lp", lpfilename, apikey, jobid);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
+   pclose(out);
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -32,8 +99,7 @@ int main(int argc, char** argv)
    char buffer[1024];
    char lpfilename[300];
    char* apikey;
-   int status;
-   double objMinMaxFac;
+   char* jobid;
 
    if (argc < 2)
    {
@@ -91,7 +157,6 @@ int main(int argc, char** argv)
    gmoObjReformSet(gmo, 1);
    gmoIndexBaseSet(gmo, 0);
    gmoSetNRowPerm(gmo); /* hide =N= rows */
-   objMinMaxFac = (gmoSense(gmo) == gmoObj_Max) ? -1.0 : 1.0;
 
    /* make LP file from problem */
    sprintf(lpfilename, "%sproblem.lp", gevGetStrOpt(gev, gevNameScrDir, buffer));
@@ -99,6 +164,16 @@ int main(int argc, char** argv)
    writeLP(gmo, gev, lpfilename);
 
    /* remove(lpfilename); */
+
+   jobid = submitjob(gev, apikey);
+   if( jobid == NULL )
+   {
+      printf("Could not retrieve jobID\n");
+      goto TERMINATE;
+   }
+   gevLogPChar(gev, "JobID: "); gevLog(gev, jobid);
+
+   uploadfile(gev, lpfilename, apikey, jobid);
 
    gmoUnloadSolutionLegacy(gmo);
 

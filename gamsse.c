@@ -6,6 +6,24 @@
 
 #include "convert.h"
 
+static
+void printjoblist(
+   gevHandle_t gev,
+   char* apikey
+)
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+
+   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+   gevLog(gev, buffer);
+   pclose(out);
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -66,6 +84,8 @@ int main(int argc, char** argv)
       gevLog(gev, apikey);
    }
 
+   printjoblist(gev, apikey);
+
    /* get the problem into a normal form */
    gmoObjStyleSet(gmo, gmoObjType_Fun);
    gmoObjReformSet(gmo, 1);
@@ -77,7 +97,6 @@ int main(int argc, char** argv)
    sprintf(lpfilename, "%sproblem.lp", gevGetStrOpt(gev, gevNameScrDir, buffer));
    printf("Writing LP to %s\n", lpfilename);
    writeLP(gmo, gev, lpfilename);
-
 
    /* remove(lpfilename); */
 

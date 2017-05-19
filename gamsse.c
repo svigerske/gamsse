@@ -4,12 +4,15 @@
 #include "gmomcc.h"
 #include "gevmcc.h"
 
+#include "convert.h"
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
    gevHandle_t gev = NULL;
    int rc = EXIT_FAILURE;
    char buffer[1024];
+   char lpfilename[300];
    int status;
    double objMinMaxFac;
 
@@ -56,6 +59,11 @@ int main(int argc, char** argv)
    }
 
    gevLogStat(gev, "This is GAMS/SolveEngine.");
+
+   sprintf(lpfilename, "%sproblem.lp", gevGetStrOpt(gev, gevNameScrDir, buffer));
+   printf("Writing LP to %s\n", lpfilename);
+   writeLP(gmo, gev, lpfilename);
+
 
    /*
    * GAMS general

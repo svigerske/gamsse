@@ -1,6 +1,6 @@
 all : gamsse
 
-gamsse : gamsse.o gmomcc.o gevmcc.o
+gamsse : gamsse.o convert.o gmomcc.o gevmcc.o
 
 clean:
 	rm -f *.o gamsse

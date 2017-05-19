@@ -8,5 +8,5 @@ clean:
 %.c : gams/apifiles/C/api/%.c
 	cp $< $@
 
-LDFLAGS = -ldl -Wl,-rpath,\$$ORIGIN
+LDFLAGS = -ldl -Wl,-rpath,\$$ORIGIN -Wl,-rpath,$(realpath gams)
 CFLAGS = -Igams/apifiles/C/api -g

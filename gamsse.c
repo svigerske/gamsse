@@ -328,10 +328,16 @@ int main(int argc, char** argv)
       status = jobstatus(gev, apikey, jobid);
       gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
    }
-   while( strcmp(status, "starting") == 0 || strcmp(status, "started") == 0 );
+   while(
+     strcmp(status, "queued") == 0 ||
+     strcmp(status, "translating") == 0 ||
+     strcmp(status, "started") == 0 ||
+     strcmp(status, "starting") == 0 );
 
    if( strcmp(status, "completed") == 0 )
       getsolution(gev, apikey, jobid);
+
+   /* TODO handle status = failed and status = stopped */
 
    /* TODO job logs to get solve_time */
 

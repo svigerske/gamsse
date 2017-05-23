@@ -91,6 +91,27 @@ void uploadfile(
    pclose(out);
 }
 
+/* start job */
+static
+void startjob(
+   gevHandle_t gev,
+   char* apikey,
+   char* jobid
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+
+   sprintf(buffer, "curl -X POST -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/start", apikey, jobid);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
+   pclose(out);
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -174,6 +195,12 @@ int main(int argc, char** argv)
    gevLogPChar(gev, "JobID: "); gevLog(gev, jobid);
 
    uploadfile(gev, lpfilename, apikey, jobid);
+
+   startjob(gev, apikey, jobid);
+
+   /* job status */
+
+   /* solution */
 
    gmoUnloadSolutionLegacy(gmo);
 

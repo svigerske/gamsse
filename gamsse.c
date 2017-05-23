@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>  /* for sleep() */
 
 #include "gmomcc.h"
 #include "gevmcc.h"
@@ -18,10 +19,11 @@ void printjoblist(
    char buffer[1024];
 
    sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
+   printf("Calling %s\n", buffer);
    out = popen(buffer, "r");
    len = fread(buffer, sizeof(char), sizeof(buffer), out);
    buffer[len] = '\0';
-   gevLog(gev, buffer);
+   puts(buffer);
    pclose(out);
 }
 
@@ -38,7 +40,6 @@ char* submitjob(
    char* loc;
    char* end;
 
-/*
    sprintf(buffer, "curl -d \"{\\\"options\\\":{},\\\"files\\\":[{\\\"name\\\": \\\"problem.lp\\\"}]}\" -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
    printf("Calling %s\n", buffer);
    out = popen(buffer, "r");
@@ -46,8 +47,6 @@ char* submitjob(
    buffer[len] = '\0';
    gevLog(gev, buffer);
    pclose(out);
-*/
-   sprintf(buffer, "{\"job_id\":\"014259e50e8e7204b183ef6eb40aea86f8ad1eab\"}");
 
    loc = strstr(buffer, "job_id\"");
    if( loc == NULL )
@@ -323,10 +322,16 @@ int main(int argc, char** argv)
 
    startjob(gev, apikey, jobid);
 
-   status = jobstatus(gev, apikey, jobid);
-   gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
+   do
+   {
+      sleep(1);
+      status = jobstatus(gev, apikey, jobid);
+      gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
+   }
+   while( strcmp(status, "starting") == 0 || strcmp(status, "started") == 0 );
 
-   getsolution(gev, apikey, jobid);
+   if( strcmp(status, "completed") == 0 )
+      getsolution(gev, apikey, jobid);
 
    /* TODO job logs to get solve_time */
 

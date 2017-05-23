@@ -150,6 +150,67 @@ char* jobstatus(
    return strdup(loc);
 }
 
+/* solution */
+static
+void getsolution(
+   gevHandle_t gev,
+   char* apikey,
+   char* jobid
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+   char* loc;
+   char* end;
+   char* status;
+
+   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/solution", apikey, jobid);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+
+   /* check solution status */
+   loc = strstr(buffer, "status\"");
+   if( loc == NULL )
+      return;
+   loc += 7;  /* skip status" */
+
+   loc = strstr(loc, "\"");  /* find quote that starts status */
+   if( loc == NULL )
+      return;
+   ++loc; /* skip initial quote */
+
+   end = strstr(loc, "\""); /* find closing quote */
+   if( end == NULL )
+      return;
+   *end = '\0';
+
+   /* print status */
+   gevLogPChar(gev, "Status: "); gevLog(gev, loc);
+
+   /* get variable values */
+   loc = strstr(end+1, "variables\"");
+   if( loc == NULL )
+      return;
+   loc += 10;
+   loc = strstr(loc+10, "{\"name\"");
+   while( loc != NULL )
+   {
+      end = strstr(loc, "}");
+      if( end == NULL )
+         break; /* this is odd */
+      ++end;
+      *end = '\0';
+
+      /* print variable name and value pair */
+      gevLog(gev, loc);
+
+      loc = strstr(end+1, "{\"name\"");
+   }
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -240,7 +301,7 @@ int main(int argc, char** argv)
    status = jobstatus(gev, apikey, jobid);
    gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
 
-   /* solution */
+   getsolution(gev, apikey, jobid);
 
    gmoUnloadSolutionLegacy(gmo);
 

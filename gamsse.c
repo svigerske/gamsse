@@ -170,6 +170,7 @@ void getsolution(
    out = popen(buffer, "r");
    len = fread(buffer, sizeof(char), sizeof(buffer), out);
    buffer[len] = '\0';
+   pclose(out);
 
    /* check solution status */
    loc = strstr(buffer, "status\"");
@@ -209,6 +210,30 @@ void getsolution(
 
       loc = strstr(end+1, "{\"name\"");
    }
+}
+
+/* stop a started job, doesn't seem to delete the job */
+static
+void stopjob(
+   gevHandle_t gev,
+   char* apikey,
+   char* jobid
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+   char* loc;
+   char* end;
+   char* status;
+
+   sprintf(buffer, "curl -X DELETE -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/stop", apikey, jobid);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
+   pclose(out);
 }
 
 int main(int argc, char** argv)
@@ -302,6 +327,10 @@ int main(int argc, char** argv)
    gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
 
    getsolution(gev, apikey, jobid);
+
+   /* TODO job logs to get solve_time */
+
+   /* stopjob(gev, apikey, jobid); */
 
    gmoUnloadSolutionLegacy(gmo);
 

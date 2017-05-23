@@ -112,6 +112,44 @@ void startjob(
    pclose(out);
 }
 
+/* job status */
+static
+char* jobstatus(
+   gevHandle_t gev,
+   char* apikey,
+   char* jobid
+   )
+{
+   FILE* out;
+   size_t len;
+   char buffer[1024];
+   char* loc;
+   char* end;
+
+   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/status", apikey, jobid);
+   printf("Calling %s\n", buffer);
+   out = popen(buffer, "r");
+   len = fread(buffer, sizeof(char), sizeof(buffer), out);
+   buffer[len] = '\0';
+
+   loc = strstr(buffer, "status\"");
+   if( loc == NULL )
+      return NULL;
+   loc += 7;  /* skip status" */
+
+   loc = strstr(loc, "\"");  /* find quote that starts status */
+   if( loc == NULL )
+      return NULL;
+   ++loc; /* skip initial quote */
+
+   end = strstr(loc, "\""); /* find closing quote */
+   if( end == NULL )
+      return NULL;
+   *end = '\0';
+
+   return strdup(loc);
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -121,6 +159,7 @@ int main(int argc, char** argv)
    char lpfilename[300];
    char* apikey;
    char* jobid;
+   char* status;
 
    if (argc < 2)
    {
@@ -198,7 +237,8 @@ int main(int argc, char** argv)
 
    startjob(gev, apikey, jobid);
 
-   /* job status */
+   status = jobstatus(gev, apikey, jobid);
+   gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
 
    /* solution */
 

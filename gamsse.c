@@ -8,6 +8,8 @@
 
 #include "convert.h"
 
+#include "cJSON.h"
+
 static
 void printjoblist(
    gevHandle_t gev,
@@ -17,14 +19,30 @@ void printjoblist(
    FILE* out;
    size_t len;
    char buffer[1024];
+   cJSON* root = NULL;
+   cJSON* jobs = NULL;
 
    sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
    printf("Calling %s\n", buffer);
    out = popen(buffer, "r");
    len = fread(buffer, sizeof(char), sizeof(buffer), out);
    buffer[len] = '\0';
-   puts(buffer);
    pclose(out);
+
+   root = cJSON_Parse(buffer);
+   if( root == NULL )
+      goto TERMINATE;
+
+   jobs = cJSON_GetObjectItem(root, "jobs");
+   if( jobs == NULL )
+      goto TERMINATE;
+
+   gevLogPChar(gev, cJSON_Print(jobs));
+   gevLogPChar(gev, "\n");
+
+TERMINATE :
+   if( root != NULL )
+      cJSON_Delete(root);
 }
 
 /* returns job id */

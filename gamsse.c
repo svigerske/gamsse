@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <unistd.h>  /* for sleep() */
 
 #include "curl/curl.h"
@@ -11,6 +12,22 @@
 
 #include "convert.h"
 
+size_t appendcurlbuffer(
+   void*  buf,
+   size_t size,
+   size_t nmemb,
+   void*  userp)
+{
+   char* buffer = (char*)userp;
+   assert(buffer != NULL);
+   assert(size == 1);
+
+   memcpy(buffer, buf, nmemb);
+   buffer[nmemb] = '\0';
+
+   return nmemb;
+}
+
 static
 void printjoblist(
    gevHandle_t gev,
@@ -20,15 +37,34 @@ void printjoblist(
    FILE* out;
    size_t len;
    char buffer[1024];
+   CURL* curl = NULL;
    cJSON* root = NULL;
    cJSON* jobs = NULL;
 
+   curl = curl_easy_init();
+   if( !curl )
+	   return; /* TODO report error */
+
+   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(buffer, "Authorization: Bearer %s", apikey);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_slist_append(NULL, buffer));
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendcurlbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   buffer[0] = '\0';
+
+   curl_easy_perform(curl);
+
+/*
    sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
    printf("Calling %s\n", buffer);
    out = popen(buffer, "r");
    len = fread(buffer, sizeof(char), sizeof(buffer), out);
    buffer[len] = '\0';
    pclose(out);
+*/
 
    root = cJSON_Parse(buffer);
    if( root == NULL )
@@ -44,6 +80,9 @@ void printjoblist(
 TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
+
+   if( curl != NULL )
+	   curl_easy_cleanup(curl);
 }
 
 /* returns job id */

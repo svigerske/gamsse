@@ -74,6 +74,8 @@ void printjoblist(
    struct curl_slist* headers = NULL;
    char* outstr;
 
+   gevLog(gev, "Printing Joblist");
+
    curl = curl_easy_init();
    if( curl == NULL )
 	   return; /* TODO report error */
@@ -133,6 +135,8 @@ char* submitjob(
    cJSON* id = NULL;
    struct curl_slist* headers = NULL;
    char* idstr = NULL;
+
+   gevLog(gev, "Creating Job");
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -195,6 +199,8 @@ void uploadfile(
    struct curl_slist* headers = NULL;
    struct curl_httppost* post = NULL;
    struct curl_httppost* last = NULL;
+
+   gevLog(gev, "Uploading problem file");
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -259,6 +265,8 @@ void startjob(
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
 
+   gevLog(gev, "Starting job");
+
    curl = curl_easy_init();
    if( curl == NULL )
       return; /* TODO report error */
@@ -304,34 +312,59 @@ char* jobstatus(
    char* jobid
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
-   char* loc;
-   char* end;
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   struct curl_slist* headers = NULL;
+   cJSON* root = NULL;
+   cJSON* status = NULL;
+   char* statusstr = NULL;
 
-   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/status", apikey, jobid);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
+   gevLog(gev, "Query Job Status");
 
-   loc = strstr(buffer, "status\"");
-   if( loc == NULL )
-      return NULL;
-   loc += 7;  /* skip status" */
+   curl = curl_easy_init();
+   if( curl == NULL )
+      return NULL; /* TODO report error */
 
-   loc = strstr(loc, "\"");  /* find quote that starts status */
-   if( loc == NULL )
-      return NULL;
-   ++loc; /* skip initial quote */
+   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/status", jobid);
+   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
 
-   end = strstr(loc, "\""); /* find closing quote */
-   if( end == NULL )
-      return NULL;
-   *end = '\0';
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-   return strdup(loc);
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+
+   curl_easy_perform(curl);
+
+   ((char*)buffer.content)[buffer.length] = '\0';
+
+   root = cJSON_Parse((char*)buffer.content);
+   if( root == NULL )
+      goto TERMINATE;
+
+   status = cJSON_GetObjectItem(root, "status");
+   if( status == NULL || !cJSON_IsString(status) )
+      goto TERMINATE;
+
+   statusstr = strdup(status->valuestring);
+
+TERMINATE :
+   if( root != NULL )
+      cJSON_Delete(root);
+
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
+
+   return statusstr;
 }
 
 /* solution */

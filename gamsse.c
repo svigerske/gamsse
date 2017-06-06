@@ -3,12 +3,13 @@
 #include <string.h>
 #include <unistd.h>  /* for sleep() */
 
+#include "curl/curl.h"
+#include "cJSON.h"
+
 #include "gmomcc.h"
 #include "gevmcc.h"
 
 #include "convert.h"
-
-#include "cJSON.h"
 
 static
 void printjoblist(
@@ -270,6 +271,8 @@ int main(int argc, char** argv)
       return 1;
    }
 
+   curl_global_init(CURL_GLOBAL_ALL);
+
    /* GAMS initialize GMO and GEV libraries */
    if (!gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)))
    {
@@ -370,6 +373,8 @@ TERMINATE:
       gmoFree(&gmo);
    if(gev != NULL)
       gevFree(&gev);
+
+   curl_global_cleanup();
 
    return rc;
 }

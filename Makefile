@@ -10,3 +10,6 @@ clean:
 
 LDFLAGS = -ldl -Wl,-rpath,\$$ORIGIN -Wl,-rpath,$(realpath gams)
 CFLAGS = -Igams/apifiles/C/api -g
+
+LDFLAGS += `curl-config --libs`
+CFLAGS += `curl-config --cflags`

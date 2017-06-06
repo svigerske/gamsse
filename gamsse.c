@@ -189,17 +189,61 @@ void uploadfile(
    char* jobid
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   struct curl_slist* headers = NULL;
+   struct curl_httppost* post = NULL;
+   struct curl_httppost* last = NULL;
 
-   sprintf(buffer, "curl -X PUT -F file=@%s -H 'Authorization: Bearer %s' https://solve.satalia.com/api/v1alpha/jobs/%s/files/problem.lp", lpfilename, apikey, jobid);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
-   pclose(out);
+   curl = curl_easy_init();
+   if( curl == NULL )
+      return; /* TODO report error */
+
+   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/files/problem.lp", jobid);
+   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
+
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+
+   /* we need to set a multi-form message via PUT
+    * with the curl tool, this was -X PUT -F file=@lpfilename
+    */
+
+   /* one (and the only) message part consists of the file to send */
+   curl_formadd(&post, &last,
+      CURLFORM_COPYNAME, "file",
+      CURLFORM_FILE, lpfilename, CURLFORM_END);
+   curl_easy_setopt(curl, CURLOPT_HTTPPOST, post);
+
+   /* further, change from POST to PUT request */
+   curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+
+   curl_easy_perform(curl);
+
+   if( buffer.length > 0 )
+   {
+      /* something went wrong */
+      ((char*)buffer.content)[buffer.length] = '\0';
+      gevLog(gev, (char*)buffer.content);
+   }
+
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   if( post != NULL )
+      curl_formfree(post);
+
+   exitbuffer(&buffer);
 }
 
 /* start job */

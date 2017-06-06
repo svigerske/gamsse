@@ -370,6 +370,7 @@ TERMINATE :
 /* solution */
 static
 void getsolution(
+   gmoHandle_t gmo,
    gevHandle_t gev,
    char* apikey,
    char* jobid
@@ -406,6 +407,9 @@ void getsolution(
 
    ((char*)buffer.content)[buffer.length] = '\0';
 
+   gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
+   gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
+
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
       goto TERMINATE;
@@ -415,30 +419,68 @@ void getsolution(
       goto TERMINATE;
 
    status = cJSON_GetObjectItem(results, "status");
-   if( status != NULL && cJSON_IsString(status) )
-   {
-      gevLogPChar(gev, "Status: ");
-      gevLog(gev, status->valuestring);
-   }
+   if( status == NULL || !cJSON_IsString(status) )
+      goto TERMINATE;
 
-   variables = cJSON_GetObjectItem(results, "variables");
-   if( variables != NULL )
-   {
-      cJSON* varvalpair;
-      cJSON* varname;
-      cJSON* val;
-      int i;
+   gevLogPChar(gev, "Status: ");
+   gevLog(gev, status->valuestring);
 
-      for( i = 0; i < cJSON_GetArraySize(variables); ++i)
+   if( strcmp(status->valuestring, "optimal") == 0 )
+   {
+      gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
+      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
+
+      variables = cJSON_GetObjectItem(results, "variables");
+      if( variables != NULL )
       {
-         varvalpair = cJSON_GetArrayItem(variables, i);
-         assert(varvalpair != NULL);
+         cJSON* varvalpair;
+         cJSON* varname;
+         cJSON* val;
+         int i;
+         long int varidx;
+         char* endptr;
+         char namebuf[GMS_SSSIZE];
 
-         varname = cJSON_GetObjectItem(varvalpair, "name");
-         val = cJSON_GetObjectItem(varvalpair, "value");
+         for( i = 0; i < cJSON_GetArraySize(variables); ++i)
+         {
+            varvalpair = cJSON_GetArrayItem(variables, i);
+            assert(varvalpair != NULL);
 
-         printf("%s = %g\n", varname->valuestring, val->valuedouble);
+            varname = cJSON_GetObjectItem(varvalpair, "name");
+            val = cJSON_GetObjectItem(varvalpair, "value");
+
+            assert(cJSON_IsString(varname));
+            assert(strlen(varname->valuestring) > 1);
+            assert(cJSON_IsNumber(val));
+
+            if( strcmp(varname->valuestring, "objvar") == 0 )
+               continue;
+
+            varidx = strtol(varname->valuestring+1, &endptr, 10);
+            if( *endptr == '\0' )
+               varidx = gmoGetjSolver(gmo, varidx-1);
+            if( *endptr != '\0' || varidx < 0 || varidx >= gmoN(gmo) )
+            {
+               gevLogPChar(gev, "Error parsing variable result ");
+               gevLog(gev, cJSON_Print(varvalpair));
+            }
+
+            gmoSetVarLOne(gmo, varidx, val->valuedouble);
+
+            sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
+            gevLogPChar(gev, strbuffer);
+         }
+
+         /* TODO check whether we have a value for every variable; does SE return sparse? */
+
+         gmoCompleteSolution(gmo);
       }
+   }
+   else
+   {
+      /* TODO what other status could SolveEngine return? */
+      gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
+      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
    }
 
 TERMINATE :
@@ -579,7 +621,7 @@ int main(int argc, char** argv)
      strcmp(status, "starting") == 0 );
 
    if( strcmp(status, "completed") == 0 )
-      getsolution(gev, apikey, jobid);
+      getsolution(gmo, gev, apikey, jobid);
 
    /* TODO handle status = failed and status = stopped */
 

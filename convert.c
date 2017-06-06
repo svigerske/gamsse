@@ -13,7 +13,7 @@
 #define MAX_PRINTLEN 561
 #define PRINTLEN     100
 
-const char* VARNAMEPREFIX[7] = { "x", "b", "i", "s1s", "s2s", "sc", "si" };
+const char* VARNAMEPREFIX[7] = { "x", "b", "i", "x", "x", "y", "j" };
 
 void convertEndLine(
    FILE*       file,

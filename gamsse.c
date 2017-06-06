@@ -75,7 +75,7 @@ void printjoblist(
    char* outstr;
 
    curl = curl_easy_init();
-   if( !curl )
+   if( curl == NULL )
 	   return; /* TODO report error */
 
    curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
@@ -126,36 +126,58 @@ char* submitjob(
    char* apikey
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
-   char* loc;
-   char* end;
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   cJSON* root = NULL;
+   cJSON* id = NULL;
+   struct curl_slist* headers = NULL;
+   char* idstr = NULL;
 
-   sprintf(buffer, "curl -d \"{\\\"options\\\":{},\\\"files\\\":[{\\\"name\\\": \\\"problem.lp\\\"}]}\" -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   gevLog(gev, buffer);
-   pclose(out);
+   curl = curl_easy_init();
+   if( curl == NULL )
+      return NULL; /* TODO report error */
 
-   loc = strstr(buffer, "job_id\"");
-   if( loc == NULL )
-      return NULL;
-   loc += 7;  /* skip job_id" */
+   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
 
-   loc = strstr(loc, "\"");  /* find quote that starts job id */
-   if( loc == NULL )
-      return NULL;
-   ++loc; /* skip initial quote */
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-   end = strstr(loc, "\""); /* find closing quote */
-   if( end == NULL )
-      return NULL;
-   *end = '\0';
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
-   return strdup(loc);
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{\"options\":{},\"files\":[{\"name\":\"problem.lp\"}]}");
+
+   curl_easy_perform(curl);
+
+   ((char*)buffer.content)[buffer.length] = '\0';
+
+   root = cJSON_Parse((char*)buffer.content);
+   if( root == NULL )
+      goto TERMINATE;
+
+   id = cJSON_GetObjectItem(root, "job_id");  /* NOTE: will change to "id" with API 2 */
+   if( id == NULL || !cJSON_IsString(id) )
+      goto TERMINATE;
+
+   idstr = strdup(id->valuestring);
+
+TERMINATE :
+   if( root != NULL )
+      cJSON_Delete(root);
+
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
+
+   return idstr;
 }
 
 /* upload problem file */

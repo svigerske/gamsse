@@ -9,7 +9,7 @@ clean:
 	cp $< $@
 
 LDFLAGS = -ldl -Wl,-rpath,\$$ORIGIN -Wl,-rpath,$(realpath gams)
-CFLAGS = -Igams/apifiles/C/api -g
+CFLAGS = -Igams/apifiles/C/api -g -Wall -Wextra -Wno-unused-parameter
 
 LDFLAGS += `curl-config --libs`
 CFLAGS += `curl-config --cflags`

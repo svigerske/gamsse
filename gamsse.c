@@ -66,8 +66,6 @@ void printjoblist(
    char* apikey
 )
 {
-   FILE* out;
-   size_t len;
    char strbuffer[1024];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
@@ -81,25 +79,17 @@ void printjoblist(
 	   return; /* TODO report error */
 
    curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
+
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: Bearer %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
 
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    curl_easy_perform(curl);
-
-/*
-   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs", apikey);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   pclose(out);
-*/
 
    ((char*)buffer.content)[buffer.length] = '\0';
 
@@ -180,8 +170,6 @@ void uploadfile(
    FILE* out;
    size_t len;
    char buffer[1024];
-   char* loc;
-   char* end;
 
    sprintf(buffer, "curl -X PUT -F file=@%s -H 'Authorization: Bearer %s' https://solve.satalia.com/api/v1alpha/jobs/%s/files/problem.lp", lpfilename, apikey, jobid);
    printf("Calling %s\n", buffer);
@@ -264,7 +252,6 @@ void getsolution(
    char buffer[1024];
    char* loc;
    char* end;
-   char* status;
 
    sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/solution", apikey, jobid);
    printf("Calling %s\n", buffer);
@@ -313,6 +300,7 @@ void getsolution(
    }
 }
 
+#if 0
 /* stop a started job, doesn't seem to delete the job */
 static
 void stopjob(
@@ -324,9 +312,6 @@ void stopjob(
    FILE* out;
    size_t len;
    char buffer[1024];
-   char* loc;
-   char* end;
-   char* status;
 
    sprintf(buffer, "curl -X DELETE -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/stop", apikey, jobid);
    printf("Calling %s\n", buffer);
@@ -336,6 +321,7 @@ void stopjob(
    gevLog(gev, buffer);  /* if everything went fine, then this is empty */
    pclose(out);
 }
+#endif
 
 int main(int argc, char** argv)
 {

@@ -1,3 +1,15 @@
+/* TODO:
+ * - switch to v2 API
+ * - interrupt job when timelimit reached
+ * - delete job
+ * - there should be no need to write problem to .lp file to disk
+ * - read apikey from option file
+ *
+ * Links:
+ * - https://curl.haxx.se/libcurl/c/libcurl.html
+ * - https://github.com/DaveGamble/cJSON/tree/v1.5.3
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -467,11 +479,14 @@ void getsolution(
 
             gmoSetVarLOne(gmo, varidx, val->valuedouble);
 
-            sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
-            gevLogPChar(gev, strbuffer);
+            if( gmoN(gmo) < 30 )
+            {
+               sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
+               gevLogPChar(gev, strbuffer);
+            }
          }
 
-         /* TODO check whether we have a value for every variable; does SE return sparse? */
+         /* TODO check whether we have a value for every variable */
 
          gmoCompleteSolution(gmo);
       }
@@ -615,7 +630,7 @@ int main(int argc, char** argv)
       gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
    }
    while(
-     /* strcmp(status, "queued") == 0 || */   /* queued means, that "startjob" failed */
+     /* strcmp(status, "queued") == 0 || */   /* TODO queued means, that "startjob" failed */
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0 );

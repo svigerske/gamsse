@@ -375,57 +375,83 @@ void getsolution(
    char* jobid
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
-   char* loc;
-   char* end;
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   struct curl_slist* headers = NULL;
+   cJSON* root = NULL;
+   cJSON* results = NULL;
+   cJSON* status = NULL;
+   cJSON* variables = NULL;
 
-   sprintf(buffer, "curl -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/solution", apikey, jobid);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   pclose(out);
+   gevLog(gev, "Query Solution");
 
-   /* check solution status */
-   loc = strstr(buffer, "status\"");
-   if( loc == NULL )
-      return;
-   loc += 7;  /* skip status" */
+   curl = curl_easy_init();
+   if( curl == NULL )
+      return; /* TODO report error */
 
-   loc = strstr(loc, "\"");  /* find quote that starts status */
-   if( loc == NULL )
-      return;
-   ++loc; /* skip initial quote */
+   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/solution", jobid);
+   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
 
-   end = strstr(loc, "\""); /* find closing quote */
-   if( end == NULL )
-      return;
-   *end = '\0';
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-   /* print status */
-   gevLogPChar(gev, "Status: "); gevLog(gev, loc);
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
-   /* get variable values */
-   loc = strstr(end+1, "variables\"");
-   if( loc == NULL )
-      return;
-   loc += 10;
-   loc = strstr(loc+10, "{\"name\"");
-   while( loc != NULL )
+   curl_easy_perform(curl);
+
+   ((char*)buffer.content)[buffer.length] = '\0';
+
+   root = cJSON_Parse((char*)buffer.content);
+   if( root == NULL )
+      goto TERMINATE;
+
+   results = cJSON_GetObjectItem(root, "results"); /* NOTE: will change to "result" in API 2 */
+   if( results == NULL )
+      goto TERMINATE;
+
+   status = cJSON_GetObjectItem(results, "status");
+   if( status != NULL && cJSON_IsString(status) )
    {
-      end = strstr(loc, "}");
-      if( end == NULL )
-         break; /* this is odd */
-      ++end;
-      *end = '\0';
-
-      /* print variable name and value pair */
-      gevLog(gev, loc);
-
-      loc = strstr(end+1, "{\"name\"");
+      gevLogPChar(gev, "Status: ");
+      gevLog(gev, status->valuestring);
    }
+
+   variables = cJSON_GetObjectItem(results, "variables");
+   if( variables != NULL )
+   {
+      cJSON* varvalpair;
+      cJSON* varname;
+      cJSON* val;
+      int i;
+
+      for( i = 0; i < cJSON_GetArraySize(variables); ++i)
+      {
+         varvalpair = cJSON_GetArrayItem(variables, i);
+         assert(varvalpair != NULL);
+
+         varname = cJSON_GetObjectItem(varvalpair, "name");
+         val = cJSON_GetObjectItem(varvalpair, "value");
+
+         printf("%s = %g\n", varname->valuestring, val->valuedouble);
+      }
+   }
+
+TERMINATE :
+   if( root != NULL )
+      cJSON_Delete(root);
+
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
 }
 
 #if 0

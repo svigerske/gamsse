@@ -254,17 +254,46 @@ void startjob(
    char* jobid
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   struct curl_slist* headers = NULL;
 
-   sprintf(buffer, "curl -X POST -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/start", apikey, jobid);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
-   pclose(out);
+   curl = curl_easy_init();
+   if( curl == NULL )
+      return; /* TODO report error */
+
+   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/start", jobid);
+   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
+
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+
+   /* we want an empty POST request */
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+
+   curl_easy_perform(curl);
+
+   if( buffer.length > 0 )
+   {
+      /* something went wrong */
+      ((char*)buffer.content)[buffer.length] = '\0';
+      gevLog(gev, (char*)buffer.content);
+   }
+
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
 }
 
 /* job status */
@@ -485,7 +514,7 @@ int main(int argc, char** argv)
       gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
    }
    while(
-     strcmp(status, "queued") == 0 ||
+     /* strcmp(status, "queued") == 0 || */   /* queued means, that "startjob" failed */
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0 );

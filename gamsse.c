@@ -12,18 +12,50 @@
 
 #include "convert.h"
 
-size_t appendcurlbuffer(
-   void*  buf,
+typedef struct
+{
+   size_t  size;
+   size_t  length;
+   void*   content;
+} buffer_t;
+
+#define BUFFERINIT {0,0,NULL}
+
+static
+void exitbuffer(
+   buffer_t* buf
+   )
+{
+   free(buf->content);
+   buf->content = NULL;
+   buf->size = 0;
+   buf->length = 0;
+}
+
+size_t appendbuffer(
+   void*  curlbuf,
    size_t size,
    size_t nmemb,
-   void*  userp)
+   void*  buf)
 {
-   char* buffer = (char*)userp;
-   assert(buffer != NULL);
-   assert(size == 1);
+   buffer_t* buffer = (buffer_t*)buf;
 
-   memcpy(buffer, buf, nmemb);
-   buffer[nmemb] = '\0';
+   assert(curlbuf != NULL || nmemb == 0);
+   assert(buffer != NULL);
+
+   if( buffer->size <= buffer->length + nmemb * size )
+   {
+      buffer->content = realloc(buffer->content, 2 * (buffer->length + nmemb * size));
+      if( buffer->content == NULL )
+      {
+         buffer->size = 0;
+         return 0; /* TODO error */
+      }
+      buffer->size = 2 * (buffer->length + nmemb * size); /* TODO nicer formula */
+   }
+
+   memcpy(buffer->content + buffer->length, curlbuf, nmemb * size);
+   buffer->length += nmemb * size;
 
    return nmemb;
 }
@@ -36,10 +68,13 @@ void printjoblist(
 {
    FILE* out;
    size_t len;
-   char buffer[1024];
+   char strbuffer[1024];
+   buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    cJSON* root = NULL;
    cJSON* jobs = NULL;
+   struct curl_slist* headers = NULL;
+   char* outstr;
 
    curl = curl_easy_init();
    if( !curl )
@@ -47,13 +82,13 @@ void printjoblist(
 
    curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(buffer, "Authorization: Bearer %s", apikey);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_slist_append(NULL, buffer));
+   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
 
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendcurlbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-   buffer[0] = '\0';
 
    curl_easy_perform(curl);
 
@@ -66,7 +101,9 @@ void printjoblist(
    pclose(out);
 */
 
-   root = cJSON_Parse(buffer);
+   ((char*)buffer.content)[buffer.length] = '\0';
+
+   root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
       goto TERMINATE;
 
@@ -74,8 +111,10 @@ void printjoblist(
    if( jobs == NULL )
       goto TERMINATE;
 
-   gevLogPChar(gev, cJSON_Print(jobs));
+   outstr = cJSON_Print(jobs);
+   gevLogPChar(gev, outstr);
    gevLogPChar(gev, "\n");
+   free(outstr);
 
 TERMINATE :
    if( root != NULL )
@@ -83,6 +122,11 @@ TERMINATE :
 
    if( curl != NULL )
 	   curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
 }
 
 /* returns job id */
@@ -414,6 +458,9 @@ TERMINATE:
       gevFree(&gev);
 
    curl_global_cleanup();
+
+   gmoLibraryUnload();
+   gevLibraryUnload();
 
    return rc;
 }

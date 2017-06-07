@@ -2,6 +2,7 @@
  * - switch to v2 API
  * - interrupt job when timelimit reached
  * - delete job
+ * - reuse curl handle
  * - there should be no need to write problem to .lp file to disk
  * - read apikey from option file
  *
@@ -44,6 +45,7 @@ void exitbuffer(
    buf->length = 0;
 }
 
+static
 size_t appendbuffer(
    void*  curlbuf,
    size_t size,
@@ -73,6 +75,30 @@ size_t appendbuffer(
 }
 
 static
+char* formattime(
+   char*  buf,     /**< buffer to store time, must be at least 26 chars */
+   time_t seconds
+   )
+{
+   /* treat 0 as special value */
+   if( seconds == 0 )
+   {
+      sprintf(buf, "N/A");
+      return buf;
+   }
+
+   if( ctime_r(&seconds, buf) == NULL )
+   {
+      sprintf(buf, "N/A");
+      return buf;
+   }
+
+   buf[strlen(buf)-1] = '\0';
+
+   return buf;
+}
+
+static
 void printjoblist(
    gevHandle_t gev,
    char* apikey
@@ -84,7 +110,7 @@ void printjoblist(
    cJSON* root = NULL;
    cJSON* jobs = NULL;
    struct curl_slist* headers = NULL;
-   char* outstr;
+   int j;
 
    gevLog(gev, "Printing Joblist");
 
@@ -105,6 +131,9 @@ void printjoblist(
 
    curl_easy_perform(curl);
 
+   if( buffer.content == NULL )  /* got no output at all */
+      goto TERMINATE;
+
    ((char*)buffer.content)[buffer.length] = '\0';
 
    root = cJSON_Parse((char*)buffer.content);
@@ -112,13 +141,57 @@ void printjoblist(
       goto TERMINATE;
 
    jobs = cJSON_GetObjectItem(root, "jobs");
-   if( jobs == NULL )
+   if( jobs == NULL || !cJSON_IsArray(jobs) )
       goto TERMINATE;
 
-   outstr = cJSON_Print(jobs);
-   gevLogPChar(gev, outstr);
-   gevLogPChar(gev, "\n");
-   free(outstr);
+   if( cJSON_GetArraySize(jobs) > 0 )
+   {
+      sprintf(strbuffer, "%40s %5s %10s %30s %30s %30s\n",
+         "Job ID", "Algo", "Status", "Submittime", "Starttime", "Finishtime");
+      gevLogPChar(gev, strbuffer);
+   }
+   else
+   {
+      gevLogPChar(gev, "No jobs in joblist.\n");
+   }
+
+   for( j = 0; j < cJSON_GetArraySize(jobs); ++j )
+   {
+      cJSON* job;
+      cJSON* id;
+      cJSON* status;
+      cJSON* algo;
+      cJSON* submitted;
+      cJSON* started;
+      cJSON* finished;
+      char submittedbuf[32];
+      char startedbuf[32];
+      char finishedbuf[32];
+
+      job = cJSON_GetArrayItem(jobs, j);
+      assert(job != NULL);
+
+      id = cJSON_GetObjectItem(job, "id");
+      if( id == NULL )
+         continue;
+
+      status = cJSON_GetObjectItem(job, "status");
+      algo = cJSON_GetObjectItem(job, "algo");
+      status = cJSON_GetObjectItem(job, "status");
+      submitted = cJSON_GetObjectItem(job, "submited");
+      started = cJSON_GetObjectItem(job, "started");
+      finished = cJSON_GetObjectItem(job, "finished");
+
+      sprintf(strbuffer, "%s %5s %10s %30s %30s %30s\n",
+         id->valuestring,
+         algo != NULL ? algo->valuestring : "N/A",
+         status != NULL ? status->valuestring : "N/A",
+         formattime(submittedbuf, submitted != NULL ? submitted->valueint : 0),
+         formattime(startedbuf, started != NULL ? started->valueint : 0),
+         formattime(finishedbuf, finished != NULL ? finished->valueint : 0)
+      );
+      gevLogPChar(gev, strbuffer);
+   }
 
 TERMINATE :
    if( root != NULL )

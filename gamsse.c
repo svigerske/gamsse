@@ -74,6 +74,7 @@ size_t appendbuffer(
    return nmemb;
 }
 
+#if 0
 static
 char* formattime(
    char*  buf,     /**< buffer to store time, must be at least 26 chars */
@@ -97,6 +98,7 @@ char* formattime(
 
    return buf;
 }
+#endif
 
 static
 void printjoblist(
@@ -118,10 +120,10 @@ void printjoblist(
    if( curl == NULL )
 	   return; /* TODO report error */
 
-   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
+   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs");
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
@@ -146,7 +148,7 @@ void printjoblist(
 
    if( cJSON_GetArraySize(jobs) > 0 )
    {
-      sprintf(strbuffer, "%40s %5s %10s %30s %30s %30s\n",
+      sprintf(strbuffer, "%40s %5s %10s %30s %30s %30s Used\n",
          "Job ID", "Algo", "Status", "Submittime", "Starttime", "Finishtime");
       gevLogPChar(gev, strbuffer);
    }
@@ -164,10 +166,12 @@ void printjoblist(
       cJSON* submitted;
       cJSON* started;
       cJSON* finished;
+      cJSON* usedtime;
+#if 0
       char submittedbuf[32];
       char startedbuf[32];
       char finishedbuf[32];
-
+#endif
       job = cJSON_GetArrayItem(jobs, j);
       assert(job != NULL);
 
@@ -176,19 +180,26 @@ void printjoblist(
          continue;
 
       status = cJSON_GetObjectItem(job, "status");
-      algo = cJSON_GetObjectItem(job, "algo");
+      algo = cJSON_GetObjectItem(job, "algorithm");
       status = cJSON_GetObjectItem(job, "status");
-      submitted = cJSON_GetObjectItem(job, "submited");
+      submitted = cJSON_GetObjectItem(job, "submitted");
       started = cJSON_GetObjectItem(job, "started");
       finished = cJSON_GetObjectItem(job, "finished");
+      usedtime = cJSON_GetObjectItem(job, "used_time");
 
-      sprintf(strbuffer, "%s %5s %10s %30s %30s %30s\n",
+      sprintf(strbuffer, "%s %5s %10s %30s %30s %30s %5d\n",
          id->valuestring,
          algo != NULL ? algo->valuestring : "N/A",
          status != NULL ? status->valuestring : "N/A",
+         submitted != NULL ? submitted->valuestring : "N/A",
+         started != NULL ? started->valuestring : "N/A",
+         finished != NULL ? finished->valuestring : "N/A",
+#if 0
          formattime(submittedbuf, submitted != NULL ? submitted->valueint : 0),
          formattime(startedbuf, started != NULL ? started->valueint : 0),
-         formattime(finishedbuf, finished != NULL ? finished->valueint : 0)
+         formattime(finishedbuf, finished != NULL ? finished->valueint : 0),
+#endif
+         usedtime ? usedtime->valueint : 0
       );
       gevLogPChar(gev, strbuffer);
    }

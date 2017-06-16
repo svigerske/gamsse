@@ -1,9 +1,8 @@
 /* TODO:
- * - switch to v2 API
  * - interrupt job when timelimit reached
  * - delete job
  * - reuse curl handle
- * - there should be no need to write problem to .lp file to disk
+ * - there should be no need to write problem to .lp file to disk (encode to base64 directly)
  * - read apikey from option file
  *
  * Links:
@@ -19,6 +18,7 @@
 
 #include "curl/curl.h"
 #include "cJSON.h"
+#include "base64encode.h"
 
 #include "gmomcc.h"
 #include "gevmcc.h"
@@ -99,6 +99,56 @@ char* formattime(
    return buf;
 }
 #endif
+
+static
+char* getproblembase64(
+   char* lpfilename
+)
+{
+   FILE* f;
+   long filesize;
+   char* prob;
+   base64_encodestate es;
+   char buf[1024];
+   int cnt;
+   int pos;
+
+   f = fopen(lpfilename, "r");
+   if( f == NULL )
+      return NULL;
+
+   fseek(f, 0L, SEEK_END);
+   filesize = ftell(f);
+   fseek(f, 0L, SEEK_SET);
+
+   prob = (char*) malloc(2*filesize);  /* we need 4/3 of the filesize for the encoded problem string */
+   if( prob == NULL )
+   {
+      fclose(f);
+      return NULL;
+   }
+
+   base64_init_encodestate(&es);
+   pos = 0;
+   while( 1 )
+   {
+      cnt = fread(buf, sizeof(char), sizeof(buf), f);
+      if( cnt == 0 )
+         break;
+      assert(pos + 2*cnt <= 2*filesize);
+      cnt = base64_encode_block(buf, cnt, prob+pos, &es);
+      pos += cnt;
+   }
+
+   assert(pos + 3 < 2*filesize);
+   cnt = base64_encode_blockend(prob+pos, &es);
+   pos += cnt;
+
+   fclose(f);
+
+   return prob;
+}
+
 
 static
 void printjoblist(
@@ -221,7 +271,8 @@ TERMINATE :
 static
 char* submitjob(
    gevHandle_t gev,
-   char* apikey
+   char* apikey,
+   char* lpfilename
    )
 {
    char strbuffer[1024];
@@ -231,17 +282,23 @@ char* submitjob(
    cJSON* id = NULL;
    struct curl_slist* headers = NULL;
    char* idstr = NULL;
+   char* postfields = NULL;
+   char* problem = NULL;
 
    gevLog(gev, "Creating Job");
 
+   problem = getproblembase64(lpfilename);
+   if( problem == NULL )
+      return NULL;
+
    curl = curl_easy_init();
    if( curl == NULL )
-      return NULL; /* TODO report error */
+      goto TERMINATE; /* TODO report error */
 
-   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v1alpha/jobs");
+   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs");
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
@@ -249,7 +306,13 @@ char* submitjob(
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
-   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "{\"options\":{},\"files\":[{\"name\":\"problem.lp\"}]}");
+   postfields = (char*)malloc(strlen(problem) + 100);
+   if( postfields == NULL )
+      goto TERMINATE;
+   strcpy(postfields, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
+   strcat(postfields, problem);
+   strcat(postfields, "\"}]}");
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postfields);
 
    curl_easy_perform(curl);
 
@@ -259,13 +322,16 @@ char* submitjob(
    if( root == NULL )
       goto TERMINATE;
 
-   id = cJSON_GetObjectItem(root, "job_id");  /* NOTE: will change to "id" with API 2 */
+   id = cJSON_GetObjectItem(root, "id");
    if( id == NULL || !cJSON_IsString(id) )
       goto TERMINATE;
 
    idstr = strdup(id->valuestring);
 
 TERMINATE :
+   if( problem != NULL )
+      free(problem);
+
    if( root != NULL )
       cJSON_Delete(root);
 
@@ -275,11 +341,15 @@ TERMINATE :
    if( headers != NULL )
       curl_slist_free_all(headers);
 
+   if( postfields != NULL )
+      postfields = NULL;
+
    exitbuffer(&buffer);
 
    return idstr;
 }
 
+#if 0
 /* upload problem file */
 static
 void uploadfile(
@@ -347,6 +417,7 @@ void uploadfile(
 
    exitbuffer(&buffer);
 }
+#endif
 
 /* start job */
 static
@@ -367,11 +438,11 @@ void startjob(
    if( curl == NULL )
       return; /* TODO report error */
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/start", jobid);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
@@ -386,7 +457,7 @@ void startjob(
 
    if( buffer.length > 0 )
    {
-      /* something went wrong */
+      /* something went wrong */ /* TODO if buffer is just "{}", then this is no problem */
       ((char*)buffer.content)[buffer.length] = '\0';
       gevLog(gev, (char*)buffer.content);
    }
@@ -422,11 +493,11 @@ char* jobstatus(
    if( curl == NULL )
       return NULL; /* TODO report error */
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/status", jobid);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
@@ -487,11 +558,11 @@ void getsolution(
    if( curl == NULL )
       return; /* TODO report error */
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v1alpha/jobs/%s/solution", jobid);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: Bearer %s", apikey);
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
@@ -510,7 +581,7 @@ void getsolution(
    if( root == NULL )
       goto TERMINATE;
 
-   results = cJSON_GetObjectItem(root, "results"); /* NOTE: will change to "result" in API 2 */
+   results = cJSON_GetObjectItem(root, "result");
    if( results == NULL )
       goto TERMINATE;
 
@@ -608,7 +679,7 @@ void stopjob(
    size_t len;
    char buffer[1024];
 
-   sprintf(buffer, "curl -X DELETE -H \"Authorization: Bearer %s\" https://solve.satalia.com/api/v1alpha/jobs/%s/stop", apikey, jobid);
+   sprintf(buffer, "curl -X DELETE -H \"Authorization: api-key %s\" https://solve.satalia.com/api/v2/jobs/%s/stop", apikey, jobid);
    printf("Calling %s\n", buffer);
    out = popen(buffer, "r");
    len = fread(buffer, sizeof(char), sizeof(buffer), out);
@@ -695,15 +766,13 @@ int main(int argc, char** argv)
 
    /* remove(lpfilename); */
 
-   jobid = submitjob(gev, apikey);
+   jobid = submitjob(gev, apikey, lpfilename);
    if( jobid == NULL )
    {
       printf("Could not retrieve jobID\n");
       goto TERMINATE;
    }
    gevLogPChar(gev, "JobID: "); gevLog(gev, jobid);
-
-   uploadfile(gev, lpfilename, apikey, jobid);
 
    startjob(gev, apikey, jobid);
 
@@ -714,7 +783,7 @@ int main(int argc, char** argv)
       gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
    }
    while(
-     /* strcmp(status, "queued") == 0 || */   /* TODO queued means, that "startjob" failed */
+     strcmp(status, "queued") == 0 ||   /* if queued, then we wait for available resources - hope that this wouldn't take too long */
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0 );

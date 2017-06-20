@@ -2,7 +2,6 @@
  * - interrupt job when timelimit reached
  * - delete job
  * - reuse curl handle
- * - encode problem to base64 within appendbufferConvert
  * - read apikey from option file
  *
  * Links:
@@ -33,6 +32,13 @@ typedef struct
    void*   content;
 } buffer_t;
 
+/** struct for writing problem into base64-encoded string */
+typedef struct
+{
+   buffer_t           buffer;
+   base64_encodestate es;
+} encodeprob_t;
+
 #define BUFFERINIT {0,0,NULL}
 
 static
@@ -46,8 +52,49 @@ void exitbuffer(
    buf->length = 0;
 }
 
+/** ensures that there is space for at least size many additional characters in the buffer */
+static
+void ensurebuffer(
+   buffer_t* buffer,
+   size_t    size
+   )
+{
+   assert(buffer != NULL);
+
+   if( buffer->size <= buffer->length + size )
+   {
+      buffer->content = realloc(buffer->content, 2 * (buffer->length + size));
+      if( buffer->content == NULL )
+      {
+         buffer->size = 0;
+         /* TODO error */
+      }
+      buffer->size = 2 * (buffer->length + size); /* TODO nicer formula */
+   }
+}
+
 static
 size_t appendbuffer(
+   buffer_t* buffer,
+   char*     msg
+)
+{
+   size_t msglen;
+
+   assert(buffer != NULL);
+   assert(msg != NULL);
+
+   msglen = strlen(msg);
+
+   ensurebuffer(buffer, msglen+1);
+   memcpy(buffer->content + buffer->length, msg, msglen+1);  /* include closing '\0', but do not count it into length, so it gets overwritten next */
+   buffer->length += msglen;
+
+   return msglen;
+}
+
+static
+size_t appendbufferCurl(
    void*  curlbuf,
    size_t size,
    size_t nmemb,
@@ -58,17 +105,7 @@ size_t appendbuffer(
    assert(curlbuf != NULL || nmemb == 0);
    assert(buffer != NULL);
 
-   if( buffer->size <= buffer->length + nmemb * size )
-   {
-      buffer->content = realloc(buffer->content, 2 * (buffer->length + nmemb * size));
-      if( buffer->content == NULL )
-      {
-         buffer->size = 0;
-         return 0; /* TODO error */
-      }
-      buffer->size = 2 * (buffer->length + nmemb * size); /* TODO nicer formula */
-   }
-
+   ensurebuffer(buffer, nmemb * size);
    memcpy(buffer->content + buffer->length, curlbuf, nmemb * size);
    buffer->length += nmemb * size;
 
@@ -79,9 +116,22 @@ size_t appendbuffer(
 static
 DECL_convertWriteFunc(appendbufferConvert)
 {
-   assert(msg != NULL);
+   encodeprob_t* encodeprob;
+   size_t msglen;
+   int cnt;
 
-   return appendbuffer((void*)msg, sizeof(char), strlen(msg), writedata);
+   assert(msg != NULL);
+   assert(writedata != NULL);
+
+   encodeprob = (encodeprob_t*)writedata;
+
+   msglen = strlen(msg);
+
+   ensurebuffer(&encodeprob->buffer, 2*msglen);  /* need 4/3*msglen many more bytes in buffer */
+   cnt = base64_encode_block(msg, msglen, encodeprob->buffer.content + encodeprob->buffer.length, &encodeprob->es);
+   encodeprob->buffer.length += cnt;
+
+   return msglen;
 }
 
 #if 0
@@ -161,6 +211,7 @@ char* getproblembase64(
 }
 #endif
 
+#if 0
 static
 char* convertbase64(
    char*  src,
@@ -181,6 +232,7 @@ char* convertbase64(
 
    return dest;
 }
+#endif
 
 static
 void printjoblist(
@@ -210,7 +262,7 @@ void printjoblist(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    curl_easy_perform(curl);
@@ -302,9 +354,9 @@ TERMINATE :
 /* returns job id */
 static
 char* submitjob(
+   gmoHandle_t gmo,
    gevHandle_t gev,
-   char* apikey,
-   buffer_t* lpprob
+   char* apikey
    )
 {
    char strbuffer[1024];
@@ -315,13 +367,9 @@ char* submitjob(
    struct curl_slist* headers = NULL;
    char* idstr = NULL;
    char* postfields = NULL;
-   char* problem = NULL;
+   encodeprob_t encodeprob = { .buffer = BUFFERINIT };
 
    gevLog(gev, "Creating Job");
-
-   problem = convertbase64(lpprob->content, lpprob->length);
-   if( problem == NULL )
-      return NULL;
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -335,16 +383,20 @@ char* submitjob(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
-   postfields = (char*)malloc(strlen(problem) + 100);
-   if( postfields == NULL )
-      goto TERMINATE;
-   strcpy(postfields, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
-   strcat(postfields, problem);
-   strcat(postfields, "\"}]}");
-   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postfields);
+   /* post fields */
+   appendbuffer(&encodeprob.buffer, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
+
+   /* append base64 encode of string in LP format (this will not be 0-terminated) */
+   base64_init_encodestate(&encodeprob.es);
+   writeLP(gmo, gev, appendbufferConvert, &encodeprob);
+   ensurebuffer(&encodeprob.buffer, 2);
+   encodeprob.buffer.length += base64_encode_blockend(encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
+
+   appendbuffer(&encodeprob.buffer, "\"}]}");
+   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content);
 
    curl_easy_perform(curl);
 
@@ -361,9 +413,6 @@ char* submitjob(
    idstr = strdup(id->valuestring);
 
 TERMINATE :
-   if( problem != NULL )
-      free(problem);
-
    if( root != NULL )
       cJSON_Delete(root);
 
@@ -377,6 +426,7 @@ TERMINATE :
       postfields = NULL;
 
    exitbuffer(&buffer);
+   exitbuffer(&encodeprob.buffer);
 
    return idstr;
 }
@@ -413,7 +463,7 @@ void uploadfile(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    /* we need to set a multi-form message via PUT
@@ -479,7 +529,7 @@ void startjob(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    /* we want an empty POST request */
@@ -534,7 +584,7 @@ char* jobstatus(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    curl_easy_perform(curl);
@@ -599,7 +649,7 @@ void getsolution(
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbuffer);
+   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
 
    curl_easy_perform(curl);
@@ -730,7 +780,6 @@ int main(int argc, char** argv)
    char* apikey;
    char* jobid;
    char* status;
-   buffer_t lpprob = BUFFERINIT;
 
    if (argc < 2)
    {
@@ -791,11 +840,7 @@ int main(int argc, char** argv)
    gmoIndexBaseSet(gmo, 0);
    gmoSetNRowPerm(gmo); /* hide =N= rows */
 
-   /* make string in LP format from buffer (this will not be 0-terminated) */
-   writeLP(gmo, gev, appendbufferConvert, &lpprob);
-   /* TODO check return, check lpprob.length > 0 */
-
-   jobid = submitjob(gev, apikey, &lpprob);
+   jobid = submitjob(gmo, gev, apikey);
    if( jobid == NULL )
    {
       printf("Could not retrieve jobID\n");
@@ -831,8 +876,6 @@ int main(int argc, char** argv)
    rc = EXIT_SUCCESS;
 
 TERMINATE:
-   exitbuffer(&lpprob);
-
    if(gmo != NULL)
       gmoFree(&gmo);
    if(gev != NULL)

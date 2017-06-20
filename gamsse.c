@@ -778,8 +778,8 @@ int main(int argc, char** argv)
    int rc = EXIT_FAILURE;
    char buffer[1024];
    char* apikey;
-   char* jobid;
-   char* status;
+   char* jobid = NULL;
+   char* status = NULL;
 
    if (argc < 2)
    {
@@ -853,6 +853,7 @@ int main(int argc, char** argv)
    do
    {
       sleep(1);
+      free(status);
       status = jobstatus(gev, apikey, jobid);
       gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
    }
@@ -885,6 +886,9 @@ TERMINATE:
 
    gmoLibraryUnload();
    gevLibraryUnload();
+
+   free(jobid);
+   free(status);
 
    return rc;
 }

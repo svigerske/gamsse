@@ -8,6 +8,7 @@
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
  * - https://github.com/DaveGamble/cJSON/tree/v1.5.3
+ * - http://libb64.sourceforge.net/
  */
 
 #include <stdio.h>
@@ -689,6 +690,12 @@ void stopjob(
 }
 #endif
 
+static
+DECL_convertWriteFunc(myfputs)
+{
+   return fputs(msg, (FILE*)writedata);
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
@@ -696,6 +703,7 @@ int main(int argc, char** argv)
    int rc = EXIT_FAILURE;
    char buffer[1024];
    char lpfilename[300];
+   FILE* lpfile;
    char* apikey;
    char* jobid;
    char* status;
@@ -762,7 +770,10 @@ int main(int argc, char** argv)
    /* make LP file from problem */
    sprintf(lpfilename, "%sproblem.lp", gevGetStrOpt(gev, gevNameScrDir, buffer));
    printf("Writing LP to %s\n", lpfilename);
-   writeLP(gmo, gev, lpfilename);
+   lpfile = fopen(lpfilename, "w");
+   assert(lpfile != NULL);
+   writeLP(gmo, gev, myfputs, lpfile);
+   fclose(lpfile);
 
    /* remove(lpfilename); */
 

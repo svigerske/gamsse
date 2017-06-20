@@ -22,16 +22,23 @@ typedef enum {
 struct gmoRec;
 struct gevRec;
 
+#define DECL_convertWriteFunc(x) size_t x ( \
+   const char* msg, \
+   void*       writedata \
+)
+
 extern
 void convertEndLine(
-   FILE*       file,
+   DECL_convertWriteFunc((*writefunc)),
+   void*       writedata,
    char*       linebuffer,
    int*        linecnt
 );
 
 extern
 void convertAppendLine(
-   FILE*       file,
+   DECL_convertWriteFunc((*writefunc)),
+   void*       writedata,
    char*       linebuffer,
    int*        linecnt,
    const char* extension
@@ -55,7 +62,8 @@ extern
 RETURN writeLP(
    struct gmoRec* gmo,
    struct gevRec* gev,
-   const char*    filename
+   DECL_convertWriteFunc((*writefunc)),
+   void*          writedata
 );
 
 #endif /* CONVERT_H_ */

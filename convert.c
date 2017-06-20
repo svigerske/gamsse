@@ -535,7 +535,7 @@ RETURN writeLP(
    linebuffer[0] = '\0';
    linecnt = 0;
 
-   CHECK( writeStatistics(gmo, writefunc, writedata, linebuffer, &linecnt, "\\ ") );
+   /* CHECK( writeStatistics(gmo, writefunc, writedata, linebuffer, &linecnt, "\\ ") ); */
 
    lincolidx = (int*) malloc(gmoN(gmo) * sizeof(int));
    lincoef   = (double*) malloc(gmoN(gmo) * sizeof(double));

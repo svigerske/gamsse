@@ -2,7 +2,7 @@
  * - interrupt job when timelimit reached
  * - delete job
  * - reuse curl handle
- * - there should be no need to write problem to .lp file to disk (encode to base64 directly)
+ * - encode problem to base64 within appendbufferConvert
  * - read apikey from option file
  *
  * Links:
@@ -75,6 +75,15 @@ size_t appendbuffer(
    return nmemb;
 }
 
+/** appendbuffer function for use in convert */
+static
+DECL_convertWriteFunc(appendbufferConvert)
+{
+   assert(msg != NULL);
+
+   return appendbuffer((void*)msg, sizeof(char), strlen(msg), writedata);
+}
+
 #if 0
 static
 char* formattime(
@@ -101,6 +110,7 @@ char* formattime(
 }
 #endif
 
+#if 0
 static
 char* getproblembase64(
    char* lpfilename
@@ -149,7 +159,28 @@ char* getproblembase64(
 
    return prob;
 }
+#endif
 
+static
+char* convertbase64(
+   char*  src,
+   size_t srclen
+)
+{
+   base64_encodestate es;
+   char* dest;
+   int cnt;
+
+   dest = (char*) malloc(2*srclen);  /* we need 4/3 of the src length for the encoded problem string */
+   if( dest == NULL )
+      return NULL;
+
+   base64_init_encodestate(&es);
+   cnt = base64_encode_block(src, srclen, dest, &es);
+   cnt += base64_encode_blockend(dest+cnt, &es);
+
+   return dest;
+}
 
 static
 void printjoblist(
@@ -273,7 +304,7 @@ static
 char* submitjob(
    gevHandle_t gev,
    char* apikey,
-   char* lpfilename
+   buffer_t* lpprob
    )
 {
    char strbuffer[1024];
@@ -288,7 +319,7 @@ char* submitjob(
 
    gevLog(gev, "Creating Job");
 
-   problem = getproblembase64(lpfilename);
+   problem = convertbase64(lpprob->content, lpprob->length);
    if( problem == NULL )
       return NULL;
 
@@ -690,23 +721,16 @@ void stopjob(
 }
 #endif
 
-static
-DECL_convertWriteFunc(myfputs)
-{
-   return fputs(msg, (FILE*)writedata);
-}
-
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
    gevHandle_t gev = NULL;
    int rc = EXIT_FAILURE;
    char buffer[1024];
-   char lpfilename[300];
-   FILE* lpfile;
    char* apikey;
    char* jobid;
    char* status;
+   buffer_t lpprob = BUFFERINIT;
 
    if (argc < 2)
    {
@@ -767,17 +791,11 @@ int main(int argc, char** argv)
    gmoIndexBaseSet(gmo, 0);
    gmoSetNRowPerm(gmo); /* hide =N= rows */
 
-   /* make LP file from problem */
-   sprintf(lpfilename, "%sproblem.lp", gevGetStrOpt(gev, gevNameScrDir, buffer));
-   printf("Writing LP to %s\n", lpfilename);
-   lpfile = fopen(lpfilename, "w");
-   assert(lpfile != NULL);
-   writeLP(gmo, gev, myfputs, lpfile);
-   fclose(lpfile);
+   /* make string in LP format from buffer (this will not be 0-terminated) */
+   writeLP(gmo, gev, appendbufferConvert, &lpprob);
+   /* TODO check return, check lpprob.length > 0 */
 
-   /* remove(lpfilename); */
-
-   jobid = submitjob(gev, apikey, lpfilename);
+   jobid = submitjob(gev, apikey, &lpprob);
    if( jobid == NULL )
    {
       printf("Could not retrieve jobID\n");
@@ -813,6 +831,8 @@ int main(int argc, char** argv)
    rc = EXIT_SUCCESS;
 
 TERMINATE:
+   exitbuffer(&lpprob);
+
    if(gmo != NULL)
       gmoFree(&gmo);
    if(gev != NULL)

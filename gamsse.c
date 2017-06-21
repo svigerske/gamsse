@@ -15,6 +15,7 @@
 #include <string.h>
 #include <assert.h>
 #include <unistd.h>  /* for sleep() */
+#include <time.h>  /* for strptime */
 
 #include "curl/curl.h"
 #include "cJSON.h"
@@ -134,26 +135,48 @@ DECL_convertWriteFunc(appendbufferConvert)
    return msglen;
 }
 
-#if 0
+#if 1
 static
 char* formattime(
    char*  buf,     /**< buffer to store time, must be at least 26 chars */
-   time_t seconds
+   char*  src      /**< time string to convert, should be in form "2017-06-20T10:25:10Z" */
    )
 {
-   /* treat 0 as special value */
-   if( seconds == 0 )
+   time_t seconds;
+   struct tm tm;
+
+   if( src == NULL )
    {
-      sprintf(buf, "N/A");
+      strcpy(buf, "N/A");
       return buf;
    }
 
+   if( strlen(src) != 20 )
+   {
+      strcpy(buf, "N/A");
+      return buf;
+   }
+
+   /* convert UTC timestring into struct tm */
+   strptime(src, "%Y-%m-%dT%H:%M:%SZ", &tm);
+
+#if 0
+   asctime_r(&tm, buf);
+   buf[strlen(buf)-1] = '\0';
+#endif
+
+   /* convert struct tm into seconds since epoch */
+   /* on Windows, this might be _mkgmtime, https://msdn.microsoft.com/en-us/library/2093ets1.aspx */
+   seconds = timegm(&tm);
+
+   /* convert seconds since epoch into time string in local time zone */
    if( ctime_r(&seconds, buf) == NULL )
    {
       sprintf(buf, "N/A");
       return buf;
    }
 
+   /* remove trailing \n */
    buf[strlen(buf)-1] = '\0';
 
    return buf;
@@ -301,7 +324,7 @@ void printjoblist(
       cJSON* started;
       cJSON* finished;
       cJSON* usedtime;
-#if 0
+#if 1
       char submittedbuf[32];
       char startedbuf[32];
       char finishedbuf[32];
@@ -325,13 +348,14 @@ void printjoblist(
          id->valuestring,
          algo != NULL ? algo->valuestring : "N/A",
          status != NULL ? status->valuestring : "N/A",
+#if 0
          submitted != NULL ? submitted->valuestring : "N/A",
          started != NULL ? started->valuestring : "N/A",
          finished != NULL ? finished->valuestring : "N/A",
-#if 0
-         formattime(submittedbuf, submitted != NULL ? submitted->valueint : 0),
-         formattime(startedbuf, started != NULL ? started->valueint : 0),
-         formattime(finishedbuf, finished != NULL ? finished->valueint : 0),
+#else
+         formattime(submittedbuf, submitted != NULL ? submitted->valuestring : NULL),
+         formattime(startedbuf, started != NULL ? started->valuestring : NULL),
+         formattime(finishedbuf, finished != NULL ? finished->valuestring : NULL),
 #endif
          usedtime ? usedtime->valueint : 0
       );
@@ -790,28 +814,28 @@ int main(int argc, char** argv)
    curl_global_init(CURL_GLOBAL_ALL);
 
    /* GAMS initialize GMO and GEV libraries */
-   if (!gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)))
+   if( !gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)) )
    {
       fprintf(stderr, "%s\n", buffer);
       goto TERMINATE;
    }
 
    /* GAMS load control file */
-   if (gevInitEnvironmentLegacy(gev, argv[1]))
+   if( gevInitEnvironmentLegacy(gev, argv[1]) )
    {
       fprintf(stderr, "Could not load control file %s\n", argv[1]);
       goto TERMINATE;
    }
 
    /* GAMS let gmo know about gev */
-   if (gmoRegisterEnvironment(gmo, gev, buffer))
+   if( gmoRegisterEnvironment(gmo, gev, buffer) )
    {
       fprintf(stderr, "Error registering GAMS Environment: %s\n", buffer);
       goto TERMINATE;
    }
 
    /* GAMS load instance data */
-   if (gmoLoadDataLegacy(gmo, buffer))
+   if( gmoLoadDataLegacy(gmo, buffer) )
    {
       fprintf(stderr, "Could not load model data.\n");
       goto TERMINATE;

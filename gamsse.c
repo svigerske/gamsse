@@ -135,7 +135,6 @@ DECL_convertWriteFunc(appendbufferConvert)
    return msglen;
 }
 
-#if 1
 static
 char* formattime(
    char*  buf,     /**< buffer to store time, must be at least 26 chars */
@@ -160,11 +159,6 @@ char* formattime(
    /* convert UTC timestring into struct tm */
    strptime(src, "%Y-%m-%dT%H:%M:%SZ", &tm);
 
-#if 0
-   asctime_r(&tm, buf);
-   buf[strlen(buf)-1] = '\0';
-#endif
-
    /* convert struct tm into seconds since epoch */
    /* on Windows, this might be _mkgmtime, https://msdn.microsoft.com/en-us/library/2093ets1.aspx */
    seconds = timegm(&tm);
@@ -181,7 +175,6 @@ char* formattime(
 
    return buf;
 }
-#endif
 
 #if 0
 static
@@ -268,16 +261,15 @@ void printjoblist(
    CURL* curl = NULL;
    cJSON* root = NULL;
    cJSON* jobs = NULL;
+   cJSON* total = NULL;
    struct curl_slist* headers = NULL;
    int j;
-
-   gevLog(gev, "Printing Joblist");
 
    curl = curl_easy_init();
    if( curl == NULL )
 	   return; /* TODO report error */
 
-   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs");
+   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647");
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
@@ -298,6 +290,13 @@ void printjoblist(
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
       goto TERMINATE;
+
+   total = cJSON_GetObjectItem(root, "total");
+   if( total == NULL || !cJSON_IsNumber(total) )
+      goto TERMINATE;
+
+   sprintf(strbuffer, "Printing Joblist: %d jobs in total\n", total->valueint);
+   gevLogPChar(gev, strbuffer);
 
    jobs = cJSON_GetObjectItem(root, "jobs");
    if( jobs == NULL || !cJSON_IsArray(jobs) )
@@ -324,11 +323,9 @@ void printjoblist(
       cJSON* started;
       cJSON* finished;
       cJSON* usedtime;
-#if 1
       char submittedbuf[32];
       char startedbuf[32];
       char finishedbuf[32];
-#endif
       job = cJSON_GetArrayItem(jobs, j);
       assert(job != NULL);
 
@@ -344,19 +341,13 @@ void printjoblist(
       finished = cJSON_GetObjectItem(job, "finished");
       usedtime = cJSON_GetObjectItem(job, "used_time");
 
-      sprintf(strbuffer, "%s %5s %10s %30s %30s %30s %5d\n",
+      sprintf(strbuffer, "%s %5s %10s %30s %30s %30s %4d\n",
          id->valuestring,
          algo != NULL ? algo->valuestring : "N/A",
          status != NULL ? status->valuestring : "N/A",
-#if 0
-         submitted != NULL ? submitted->valuestring : "N/A",
-         started != NULL ? started->valuestring : "N/A",
-         finished != NULL ? finished->valuestring : "N/A",
-#else
          formattime(submittedbuf, submitted != NULL ? submitted->valuestring : NULL),
          formattime(startedbuf, started != NULL ? started->valuestring : NULL),
          formattime(finishedbuf, finished != NULL ? finished->valuestring : NULL),
-#endif
          usedtime ? usedtime->valueint : 0
       );
       gevLogPChar(gev, strbuffer);

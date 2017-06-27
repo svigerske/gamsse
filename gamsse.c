@@ -17,6 +17,10 @@
 #include <unistd.h>  /* for sleep() */
 #include <time.h>  /* for strptime */
 
+#ifdef _WIN32
+#define timegm _mkgmtime
+#endif
+
 #include "curl/curl.h"
 #include "cJSON.h"
 #include "base64encode.h"

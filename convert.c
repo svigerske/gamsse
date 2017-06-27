@@ -64,13 +64,7 @@ void convertGetVarName(
    char*       buffer
    )
 {
-   /* if original model was a scalar model written by convert, we would like to keep original variable names,
-    * even though we removed the objective variable
-    */
-   if( idx == gmoObjVar(gmo) )
-      sprintf(buffer, "objvar");
-   else
-      sprintf(buffer, "%s%d", VARNAMEPREFIX[gmoGetVarTypeOne(gmo, idx)], gmoGetjModel(gmo, idx) + 1);
+   sprintf(buffer, "%s%d", VARNAMEPREFIX[gmoGetVarTypeOne(gmo, idx)], idx);
 }
 
 void convertGetEquName(
@@ -82,7 +76,7 @@ void convertGetEquName(
    /* if original model was a scalar model written by convert, we would like to keep original equation names,
     * even though we removed the objective equation
     */
-   sprintf(buffer, "e%d", gmoGetiModel(gmo, idx) + 1);
+   sprintf(buffer, "e%d", idx);
 }
 
 static

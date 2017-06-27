@@ -1,8 +1,10 @@
 /* TODO:
- * - interrupt job when timelimit reached
+ * - interrupt job when timelimit reached or Ctrl+C
  * - delete job
  * - reuse curl handle
  * - read apikey from option file
+ * - option to enable curl verbose ouput
+ * - check for curl error response
  *
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
@@ -211,13 +213,17 @@ void printjoblist(
 
    curl = curl_easy_init();
    if( curl == NULL )
-	   return; /* TODO report error */
+   {
+      gevLogStat(gev, "printjoblist: Error in curl_easy_init()\n");
+	   return;
+   }
 
    curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647");
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
@@ -227,35 +233,42 @@ void printjoblist(
    curl_easy_perform(curl);
 
    if( buffer.content == NULL )  /* got no output at all */
+   {
+      gevLogStat(gev, "printjoblist: Failure retrieving joblist from SolveEngine.");
       goto TERMINATE;
+   }
 
    ((char*)buffer.content)[buffer.length] = '\0';
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
+   {
+      gevLogStatPChar(gev, "printjoblist: Failure parsing joblist from SolveEngine. Content: ");
+      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, "\n");
       goto TERMINATE;
+   }
 
    total = cJSON_GetObjectItem(root, "total");
    if( total == NULL || !cJSON_IsNumber(total) )
-      goto TERMINATE;
-
-   sprintf(strbuffer, "Printing Joblist: %d jobs in total\n", total->valueint);
+      sprintf(strbuffer, "Printing Joblist:\n");
+   else
+      sprintf(strbuffer, "Printing Joblist: %d jobs in total\n", total->valueint);
    gevLogPChar(gev, strbuffer);
+
+   if( total->valueint == 0 )
+      goto TERMINATE;
 
    jobs = cJSON_GetObjectItem(root, "jobs");
    if( jobs == NULL || !cJSON_IsArray(jobs) )
+   {
+      gevLogStat(gev, "printjoblist: No 'jobs' found in answer from SolveEngine.");
       goto TERMINATE;
+   }
 
-   if( cJSON_GetArraySize(jobs) > 0 )
-   {
-      sprintf(strbuffer, "%40s %5s %10s %30s %30s %30s Used\n",
-         "Job ID", "Algo", "Status", "Submittime", "Starttime", "Finishtime");
-      gevLogPChar(gev, strbuffer);
-   }
-   else
-   {
-      gevLogPChar(gev, "No jobs in joblist.\n");
-   }
+   sprintf(strbuffer, "%40s %5s %10s %30s %30s %30s Used\n",
+      "Job ID", "Algo", "Status", "Submittime", "Starttime", "Finishtime");
+   gevLogPChar(gev, strbuffer);
 
    for( j = 0; j < cJSON_GetArraySize(jobs); ++j )
    {
@@ -328,17 +341,21 @@ char* submitjob(
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
 
-   gevLog(gev, "Creating Job");
+   gevLog(gev, "Submitting Job");
 
    curl = curl_easy_init();
    if( curl == NULL )
-      goto TERMINATE; /* TODO report error */
+   {
+      gevLogStat(gev, "submitjob: Error in curl_easy_init()\n");
+      return NULL;
+   }
 
    curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs");
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
@@ -347,27 +364,48 @@ char* submitjob(
 
    /* post fields */
    appendbuffer(&encodeprob.buffer, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
+   assert(encodeprob.buffer.length > 0);
 
    /* append base64 encode of string in LP format (this will not be 0-terminated) */
    base64_init_encodestate(&encodeprob.es);
-   writeLP(gmo, gev, appendbufferConvert, &encodeprob);
-   ensurebuffer(&encodeprob.buffer, 2);
+   if( writeLP(gmo, gev, appendbufferConvert, &encodeprob) != RETURN_OK )
+   {
+      gevLogStat(gev, "submitjob: Error converting problem.\n");
+      goto TERMINATE;
+   }
+   if( ensurebuffer(&encodeprob.buffer, 6) < 6 )  /* 2 for blockend, 4 for terminating "}]} */
+   {
+      gevLogStat(gev, "submitjob: Out-of-memory converting problem.\n");
+      goto TERMINATE;
+   }
    encodeprob.buffer.length += base64_encode_blockend(encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
-
    appendbuffer(&encodeprob.buffer, "\"}]}");
    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content);
 
+   /* TODO enable status bar if postfields length is rather large */
+
    curl_easy_perform(curl);
 
+   if( buffer.content == NULL )  /* got no output at all */
+   {
+      gevLogStat(gev, "submitjob: Failure submitting job to SolveEngine.");
+      goto TERMINATE;
+   }
    ((char*)buffer.content)[buffer.length] = '\0';
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
+   {
+      gevLogStat(gev, "submitjob: Failure parsing response from SolveEngine.");
       goto TERMINATE;
+   }
 
    id = cJSON_GetObjectItem(root, "id");
    if( id == NULL || !cJSON_IsString(id) )
+   {
+      gevLogStat(gev, "submitjob: Failure obtaining job id from SolveEngine.");
       goto TERMINATE;
+   }
 
    idstr = strdup(id->valuestring);
 
@@ -390,9 +428,9 @@ TERMINATE :
    return idstr;
 }
 
-/* start job */
+/* schedule a job to be run */
 static
-void startjob(
+RETURN schedulejob(
    gevHandle_t gev,
    char* apikey,
    char* jobid
@@ -402,12 +440,14 @@ void startjob(
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
-
-   gevLog(gev, "Starting job");
+   int rc = RETURN_ERROR;
 
    curl = curl_easy_init();
    if( curl == NULL )
-      return; /* TODO report error */
+   {
+      gevLogStat(gev, "schedulejob: Error in curl_easy_init()\n");
+      goto TERMINATE;
+   }
 
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
@@ -415,6 +455,7 @@ void startjob(
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
@@ -426,13 +467,19 @@ void startjob(
 
    curl_easy_perform(curl);
 
-   if( buffer.length > 0 )
+   if( buffer.length > 2 )
    {
-      /* something went wrong */ /* TODO if buffer is just "{}", then this is no problem */
+      /* something went wrong */
+      assert(buffer.content != NULL);
       ((char*)buffer.content)[buffer.length] = '\0';
-      gevLog(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, "schedulejob: Failed to schedule job: ");
+      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, "\n");
    }
 
+   rc = RETURN_OK;
+
+TERMINATE:
    if( curl != NULL )
       curl_easy_cleanup(curl);
 
@@ -440,6 +487,8 @@ void startjob(
       curl_slist_free_all(headers);
 
    exitbuffer(&buffer);
+
+   return rc;
 }
 
 /* job status */
@@ -458,11 +507,12 @@ char* jobstatus(
    cJSON* status = NULL;
    char* statusstr = NULL;
 
-   gevLog(gev, "Query Job Status");
-
    curl = curl_easy_init();
    if( curl == NULL )
-      return NULL; /* TODO report error */
+   {
+      gevLogStat(gev, "jobstatus: Error in curl_easy_init()\n");
+      return NULL;
+   }
 
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
@@ -470,6 +520,7 @@ char* jobstatus(
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
@@ -478,15 +529,28 @@ char* jobstatus(
 
    curl_easy_perform(curl);
 
+   if( buffer.content == NULL )
+   {
+      gevLogStat(gev, "jobstatus: Error retrieving job status.");
+      goto TERMINATE;
+   }
    ((char*)buffer.content)[buffer.length] = '\0';
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
+   {
+      gevLogStatPChar(gev, "jobstatus: Error parsing job status from answer ");
+      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, "\n");
       goto TERMINATE;
+   }
 
    status = cJSON_GetObjectItem(root, "status");
    if( status == NULL || !cJSON_IsString(status) )
+   {
+      gevLogStat(gev, "jobstatus: No 'status' in answer from SolveEngine.");
       goto TERMINATE;
+   }
 
    statusstr = strdup(status->valuestring);
 
@@ -527,7 +591,10 @@ void getsolution(
 
    curl = curl_easy_init();
    if( curl == NULL )
-      return; /* TODO report error */
+   {
+      gevLogStat(gev, "getsolution: Error in curl_easy_init()\n");
+      return;
+   }
 
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", jobid);
    curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
@@ -535,6 +602,7 @@ void getsolution(
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
@@ -543,83 +611,107 @@ void getsolution(
 
    curl_easy_perform(curl);
 
-   ((char*)buffer.content)[buffer.length] = '\0';
+   if( buffer.content == NULL )
+   {
+      gevLogStat(gev, "getsolution: Error retrieving solution.");
+      goto TERMINATE;
+   }
 
-   gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
-   gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
+   ((char*)buffer.content)[buffer.length] = '\0';
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
+   {
+      gevLogStatPChar(gev, "getsolution: Error parsing solution from answer ");
+      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, "\n");
       goto TERMINATE;
+   }
 
    results = cJSON_GetObjectItem(root, "result");
    if( results == NULL )
+   {
+      gevLogStat(gev, "getsolution: No 'result' in solution from SolveEngine");
       goto TERMINATE;
+   }
 
    status = cJSON_GetObjectItem(results, "status");
    if( status == NULL || !cJSON_IsString(status) )
+   {
+      gevLogStat(gev, "getsolution: No 'status' in solution from SolveEngine");
       goto TERMINATE;
+   }
 
    gevLogPChar(gev, "Status: ");
    gevLog(gev, status->valuestring);
 
    if( strcmp(status->valuestring, "optimal") == 0 )
    {
+      cJSON* varvalpair;
+      cJSON* varname;
+      cJSON* val;
+      int i;
+      long int varidx;
+      char* endptr;
+      char namebuf[GMS_SSSIZE];
+
+      variables = cJSON_GetObjectItem(results, "variables");
+      if( variables == NULL || !cJSON_IsArray(variables) )
+      {
+         gevLogStat(gev, "getsolution: No 'variables' array in optimal solution report from SolveEngine.\n");
+         goto TERMINATE;
+      }
+
+      if( cJSON_GetArraySize(variables) != gmoN(gmo) )
+      {
+         sprintf(strbuffer, "Number of variables in solution (%d) does not match GAMS instance (%d)\n", cJSON_GetArraySize(variables), gmoN(gmo));
+         gevLogStat(gev, strbuffer);
+         goto TERMINATE;
+      }
+
+      for( i = 0; i < cJSON_GetArraySize(variables); ++i)
+      {
+         varvalpair = cJSON_GetArrayItem(variables, i);
+         assert(varvalpair != NULL);
+
+         varname = cJSON_GetObjectItem(varvalpair, "name");
+         if( varname == NULL || !cJSON_IsString(varname) || strlen(varname->valuestring) < 2 )
+         {
+            gevLogStat(gev, "getsolution: No 'name' in variable result.\n");
+            goto TERMINATE;
+         }
+
+         val = cJSON_GetObjectItem(varvalpair, "value");
+         if( val == NULL || !cJSON_IsNumber(val) )
+         {
+            gevLogStat(gev, "getsolution: No 'value' in variable result.\n");
+            goto TERMINATE;
+         }
+
+         varidx = strtol(varname->valuestring+1, &endptr, 10);
+         if( *endptr != '\0' || varidx < 0 || varidx > gmoN(gmo) )
+         {
+            gevLogPChar(gev, "Error parsing variable result ");
+            gevLog(gev, cJSON_Print(varvalpair));
+         }
+
+         gmoSetVarLOne(gmo, varidx, val->valuedouble);
+
+         if( gmoN(gmo) < 30 )
+         {
+            sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
+            gevLogPChar(gev, strbuffer);
+         }
+      }
+
       gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
       gmoSolveStatSet(gmo, gmoSolveStat_Normal);
 
-      variables = cJSON_GetObjectItem(results, "variables");
-      if( variables != NULL )
-      {
-         cJSON* varvalpair;
-         cJSON* varname;
-         cJSON* val;
-         int i;
-         long int varidx;
-         char* endptr;
-         char namebuf[GMS_SSSIZE];
-
-         for( i = 0; i < cJSON_GetArraySize(variables); ++i)
-         {
-            varvalpair = cJSON_GetArrayItem(variables, i);
-            assert(varvalpair != NULL);
-
-            varname = cJSON_GetObjectItem(varvalpair, "name");
-            val = cJSON_GetObjectItem(varvalpair, "value");
-
-            assert(cJSON_IsString(varname));
-            assert(strlen(varname->valuestring) > 1);
-            assert(cJSON_IsNumber(val));
-
-            if( strcmp(varname->valuestring, "objvar") == 0 )
-               continue;
-
-            varidx = strtol(varname->valuestring+1, &endptr, 10);
-            if( *endptr == '\0' )
-               varidx = gmoGetjSolver(gmo, varidx-1);
-            if( *endptr != '\0' || varidx < 0 || varidx >= gmoN(gmo) )
-            {
-               gevLogPChar(gev, "Error parsing variable result ");
-               gevLog(gev, cJSON_Print(varvalpair));
-            }
-
-            gmoSetVarLOne(gmo, varidx, val->valuedouble);
-
-            if( gmoN(gmo) < 30 )
-            {
-               sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
-               gevLogPChar(gev, strbuffer);
-            }
-         }
-
-         /* TODO check whether we have a value for every variable */
-
-         gmoCompleteSolution(gmo);
-      }
+      gmoCompleteSolution(gmo);
    }
    else
    {
-      /* TODO what other status could SolveEngine return? */
+      /* TODO what other status could SolveEngine return? (e.g., infeasible) */
       gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
       gmoSolveStatSet(gmo, gmoSolveStat_Normal);
    }
@@ -708,6 +800,9 @@ int main(int argc, char** argv)
 
    gevLogStat(gev, "This is the GAMS link to Satalia SolveEngine.");
 
+   gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
+   gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
+
    /* check whether we have an API key for SolveEngine */
    apikey = getenv("SOLVEENGINE_APIKEY");
    if( apikey == NULL )
@@ -715,10 +810,14 @@ int main(int argc, char** argv)
       gevLogStat(gev, "No SolveEngine API key found in environment (SOLVEENGINE_APIKEY). Exiting.");
       goto TERMINATE;
    }
+   else if( strlen(apikey) > 50 ) /* mine is 45 chars */
+   {
+      gevLogStat(gev, "Invalid API key found in environment (SOLVEENGINE_APIKEY): too long. Exiting.");
+      goto TERMINATE;
+   }
    else
    {
-      gevLogPChar(gev, "API key: ");
-      gevLog(gev, apikey);
+      gevLog(gev, "Found API key in environment.");
    }
 
    printjoblist(gev, apikey);
@@ -732,27 +831,29 @@ int main(int argc, char** argv)
    jobid = submitjob(gmo, gev, apikey);
    if( jobid == NULL )
    {
-      printf("Could not retrieve jobID\n");
+      gevLogStat(gev, "Could not retrieve jobID.");
       goto TERMINATE;
    }
    gevLogPChar(gev, "JobID: "); gevLog(gev, jobid);
 
-   startjob(gev, apikey, jobid);
+   if( schedulejob(gev, apikey, jobid) != RETURN_OK )
+      goto TERMINATE;
 
    do
    {
       sleep(1);
       free(status);
       status = jobstatus(gev, apikey, jobid);
-      gevLogPChar(gev, "Job Status: "); gevLog(gev, status);
+      gevLogPChar(gev, "Job Status: ");
+      gevLog(gev, status != NULL ? status : "UNKNOWN");
    }
-   while(
+   while( status != NULL && (
      strcmp(status, "queued") == 0 ||   /* if queued, then we wait for available resources - hope that this wouldn't take too long */
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
-     strcmp(status, "starting") == 0 );
+     strcmp(status, "starting") == 0) );
 
-   if( strcmp(status, "completed") == 0 )
+   if( status != NULL && strcmp(status, "completed") == 0 )
       getsolution(gmo, gev, apikey, jobid);
 
    /* TODO handle status = failed and status = stopped */
@@ -761,13 +862,15 @@ int main(int argc, char** argv)
 
    /* stopjob(gev, apikey, jobid); */
 
-   gmoUnloadSolutionLegacy(gmo);
 
    rc = EXIT_SUCCESS;
 
 TERMINATE:
    if(gmo != NULL)
+   {
+      gmoUnloadSolutionLegacy(gmo);
       gmoFree(&gmo);
+   }
    if(gev != NULL)
       gevFree(&gev);
 

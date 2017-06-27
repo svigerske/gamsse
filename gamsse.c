@@ -57,9 +57,12 @@ void exitbuffer(
    buf->length = 0;
 }
 
-/** ensures that there is space for at least size many additional characters in the buffer */
+/** Ensures that there is space for at least size many additional characters in the buffer.
+ *
+ * @return Remaining space in buffer. Returns 0 if realloc failed.
+ */
 static
-void ensurebuffer(
+size_t ensurebuffer(
    buffer_t* buffer,
    size_t    size
    )
@@ -68,14 +71,18 @@ void ensurebuffer(
 
    if( buffer->size <= buffer->length + size )
    {
-      buffer->content = realloc(buffer->content, 2 * (buffer->length + size));
+      buffer->size = (size_t) (1.2 * (buffer->length + size) + 4);
+      buffer->content = realloc(buffer->content, buffer->size);
+
+      assert(buffer->content != NULL);
       if( buffer->content == NULL )
       {
          buffer->size = 0;
-         /* TODO error */
+         buffer->length = 0;
       }
-      buffer->size = 2 * (buffer->length + size); /* TODO nicer formula */
    }
+
+   return buffer->size - buffer->length;
 }
 
 static
@@ -91,7 +98,9 @@ size_t appendbuffer(
 
    msglen = strlen(msg);
 
-   ensurebuffer(buffer, msglen+1);
+   if( ensurebuffer(buffer, msglen+1) < msglen + 1 )
+      return 0; /* there was a problem in increasing the buffer */
+
    memcpy(buffer->content + buffer->length, msg, msglen+1);  /* include closing '\0', but do not count it into length, so it gets overwritten next */
    buffer->length += msglen;
 
@@ -110,7 +119,9 @@ size_t appendbufferCurl(
    assert(curlbuf != NULL || nmemb == 0);
    assert(buffer != NULL);
 
-   ensurebuffer(buffer, nmemb * size);
+   if( ensurebuffer(buffer, nmemb * size) < nmemb * size )
+      return 0; /* there was a problem in increasing the buffer */
+
    memcpy(buffer->content + buffer->length, curlbuf, nmemb * size);
    buffer->length += nmemb * size;
 
@@ -132,7 +143,10 @@ DECL_convertWriteFunc(appendbufferConvert)
 
    msglen = strlen(msg);
 
-   ensurebuffer(&encodeprob->buffer, 2*msglen);  /* need 4/3*msglen many more bytes in buffer */
+   /* need 4/3*msglen many more bytes in buffer */
+   if( ensurebuffer(&encodeprob->buffer, (int)1.5*msglen+2) < 1.5*msglen )
+      return 0;
+
    cnt = base64_encode_block(msg, msglen, encodeprob->buffer.content + encodeprob->buffer.length, &encodeprob->es);
    encodeprob->buffer.length += cnt;
 

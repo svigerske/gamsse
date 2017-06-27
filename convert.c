@@ -22,6 +22,7 @@ void convertEndLine(
    int*        linecnt
 )
 {
+   /* TODO we should stop if these fail */
    writefunc(linebuffer, writedata);
    writefunc("\n", writedata);
 

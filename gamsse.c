@@ -48,6 +48,14 @@ typedef struct
 
 #define BUFFERINIT {0,0,NULL}
 
+typedef struct
+{
+   double      lastruntime;
+   CURL*       curl;
+   gevHandle_t gev;
+   int         isupload;
+} progress_t;
+
 static
 void exitbuffer(
    buffer_t* buf
@@ -153,6 +161,35 @@ DECL_convertWriteFunc(appendbufferConvert)
    encodeprob->buffer.length += cnt;
 
    return msglen;
+}
+
+/* CURLOPT_XFERINFOFUNCTION callback to print progress report */
+static int progressreportCurl(
+   void*      p,
+   curl_off_t dltotal,
+   curl_off_t dlnow,
+   curl_off_t ultotal,
+   curl_off_t ulnow
+   )
+{
+   progress_t* progress = (progress_t*) p;
+   double curtime = 0.0;
+   char buf[GMS_SSSIZE];
+
+   assert(progress != NULL);
+
+   curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime);
+
+   /* don't print if less than 1 second passed since last print */
+   if( (curtime - progress->lastruntime) < 1.0 )
+      return 0;
+   progress->lastruntime = curtime;
+
+   sprintf(buf, "%6.1fs: %" CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T " bytes %s\n", curtime,
+      progress->isupload ? ulnow : dlnow, progress->isupload ? ultotal : dltotal, progress->isupload ? "uploaded" : "downloaded");
+   gevLogPChar(progress->gev, buf);
+
+   return 0;
 }
 
 static
@@ -340,6 +377,7 @@ char* submitjob(
    char* idstr = NULL;
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
+   progress_t progress;
 
    gevLog(gev, "Submitting Job");
 
@@ -382,7 +420,14 @@ char* submitjob(
    appendbuffer(&encodeprob.buffer, "\"}]}");
    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content);
 
-   /* TODO enable status bar if postfields length is rather large */
+   /* get a progress report since this can take time for larger problems */
+   progress.curl = curl;
+   progress.gev = gev;
+   progress.lastruntime = 0;
+   progress.isupload = 1;
+   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl);
+   curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
+   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
 
    curl_easy_perform(curl);
 
@@ -408,6 +453,8 @@ char* submitjob(
    }
 
    idstr = strdup(id->valuestring);
+
+   gevLogPChar(gev, "Finished submission. Job ID: "); gevLog(gev, idstr);
 
 TERMINATE :
    if( root != NULL )
@@ -582,6 +629,7 @@ void getsolution(
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
+   progress_t progress;
    cJSON* root = NULL;
    cJSON* results = NULL;
    cJSON* status = NULL;
@@ -608,6 +656,15 @@ void getsolution(
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+
+   /* get a progress report since this can take time for larger problems */
+   progress.curl = curl;
+   progress.gev = gev;
+   progress.lastruntime = 0;
+   progress.isupload = 0;
+   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl);
+   curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
+   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
 
    curl_easy_perform(curl);
 
@@ -834,7 +891,6 @@ int main(int argc, char** argv)
       gevLogStat(gev, "Could not retrieve jobID.");
       goto TERMINATE;
    }
-   gevLogPChar(gev, "JobID: "); gevLog(gev, jobid);
 
    if( schedulejob(gev, apikey, jobid) != RETURN_OK )
       goto TERMINATE;

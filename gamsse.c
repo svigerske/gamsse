@@ -4,7 +4,6 @@
  * - reuse curl handle
  * - read apikey from option file
  * - option to enable curl verbose ouput
- * - check for http response code
  *
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
@@ -265,6 +264,7 @@ void printjoblist(
    cJSON* jobs = NULL;
    cJSON* total = NULL;
    struct curl_slist* headers = NULL;
+   long respcode;
    int j;
 
    curl = curl_easy_init();
@@ -290,6 +290,7 @@ void printjoblist(
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
+   /* perform HTTP resquest */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
@@ -297,8 +298,16 @@ void printjoblist(
       gevLogStat(gev, "printjoblist: Failure retrieving joblist from SolveEngine.");
       goto TERMINATE;
    }
-
    ((char*)buffer.content)[buffer.length] = '\0';
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure retrieving joblist from SolveEngine:");
+      gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
@@ -404,6 +413,7 @@ char* submitjob(
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
    progress_t progress;
+   long respcode;
 
    gevLog(gev, "Submitting Job");
 
@@ -460,6 +470,7 @@ char* submitjob(
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress) );
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) );
 
+   /* perform HTTP request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
@@ -468,6 +479,15 @@ char* submitjob(
       goto TERMINATE;
    }
    ((char*)buffer.content)[buffer.length] = '\0';
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure submitting job to SolveEngine:");
+      gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
@@ -520,6 +540,7 @@ RETURN schedulejob(
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
    int rc = RETURN_ERROR;
+   long respcode;
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -548,11 +569,22 @@ RETURN schedulejob(
    /* we want an empty POST request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "") );
 
+   /* perform HTTP request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure scheduling job:");
+      if( buffer.content != NULL )
+         gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
 
    if( buffer.length > 2 )
    {
-      /* something went wrong */
+      /* something else went wrong */
       assert(buffer.content != NULL);
       ((char*)buffer.content)[buffer.length] = '\0';
       gevLogStatPChar(gev, "schedulejob: Failed to schedule job: ");
@@ -590,6 +622,7 @@ char* jobstatus(
    cJSON* root = NULL;
    cJSON* status = NULL;
    char* statusstr = NULL;
+   long respcode;
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -615,6 +648,7 @@ char* jobstatus(
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
+   /* perform HTTP request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )
@@ -623,6 +657,15 @@ char* jobstatus(
       goto TERMINATE;
    }
    ((char*)buffer.content)[buffer.length] = '\0';
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure retrieving job status:");
+      gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )
@@ -676,6 +719,7 @@ void getsolution(
    cJSON* results = NULL;
    cJSON* status = NULL;
    cJSON* variables = NULL;
+   long respcode;
 
    gevLog(gev, "Query Solution");
 
@@ -713,6 +757,7 @@ void getsolution(
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress) );
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) );
 
+   /* perform HTTP request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )
@@ -720,8 +765,16 @@ void getsolution(
       gevLogStat(gev, "getsolution: Error retrieving solution.");
       goto TERMINATE;
    }
-
    ((char*)buffer.content)[buffer.length] = '\0';
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure getting solution:");
+      gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
 
    root = cJSON_Parse((char*)buffer.content);
    if( root == NULL )

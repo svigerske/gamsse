@@ -4,7 +4,7 @@
  * - reuse curl handle
  * - read apikey from option file
  * - option to enable curl verbose ouput
- * - check for curl error response
+ * - check for http response code
  *
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
@@ -54,7 +54,24 @@ typedef struct
    CURL*       curl;
    gevHandle_t gev;
    int         isupload;
+   char*       curlerrbuf;
 } progress_t;
+
+#define CURL_CHECK( gev, errbuf, code ) \
+   do \
+   { \
+      CURLcode curlres; \
+      curlres = code; \
+      if( curlres != CURLE_OK ) \
+      { \
+         gevLogStatPChar(gev, "libcurl: "); \
+         if( *errbuf != '\0' ) \
+            gevLogStat(gev, errbuf); \
+         else \
+            gevLogStat(gev, curl_easy_strerror(curlres)); \
+         goto TERMINATE; \
+      } \
+   } while( 0 )
 
 static
 void exitbuffer(
@@ -178,7 +195,7 @@ static int progressreportCurl(
 
    assert(progress != NULL);
 
-   curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime);
+   CURL_CHECK( progress->curl, progress->curlerrbuf, curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime) );
 
    /* don't print if less than 1 second passed since last print */
    if( (curtime - progress->lastruntime) < 1.0 )
@@ -189,6 +206,7 @@ static int progressreportCurl(
       progress->isupload ? ulnow : dlnow, progress->isupload ? ultotal : dltotal, progress->isupload ? "uploaded" : "downloaded");
    gevLogPChar(progress->gev, buf);
 
+TERMINATE:
    return 0;
 }
 
@@ -240,6 +258,7 @@ void printjoblist(
 )
 {
    char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    cJSON* root = NULL;
@@ -255,19 +274,23 @@ void printjoblist(
 	   return;
    }
 
-   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647");
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
-   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
-   curl_easy_perform(curl);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
    {
@@ -288,13 +311,15 @@ void printjoblist(
 
    total = cJSON_GetObjectItem(root, "total");
    if( total == NULL || !cJSON_IsNumber(total) )
-      sprintf(strbuffer, "Printing Joblist:\n");
+      gevLogPChar(gev, "Printing Joblist:\n");
    else
+   {
       sprintf(strbuffer, "Printing Joblist: %d jobs in total\n", total->valueint);
-   gevLogPChar(gev, strbuffer);
+      gevLogPChar(gev, strbuffer);
 
-   if( total->valueint == 0 )
-      goto TERMINATE;
+      if( total->valueint == 0 )
+         goto TERMINATE;
+   }
 
    jobs = cJSON_GetObjectItem(root, "jobs");
    if( jobs == NULL || !cJSON_IsArray(jobs) )
@@ -369,6 +394,7 @@ char* submitjob(
    )
 {
    char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    cJSON* root = NULL;
@@ -388,17 +414,21 @@ char* submitjob(
       return NULL;
    }
 
-   curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs");
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs") );
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
-   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* post fields */
    appendbuffer(&encodeprob.buffer, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
@@ -418,18 +448,19 @@ char* submitjob(
    }
    encodeprob.buffer.length += base64_encode_blockend(encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
    appendbuffer(&encodeprob.buffer, "\"}]}");
-   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
 
    /* get a progress report since this can take time for larger problems */
    progress.curl = curl;
    progress.gev = gev;
    progress.lastruntime = 0;
    progress.isupload = 1;
-   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl);
-   curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
-   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+   progress.curlerrbuf = curlerrbuf;
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) );
 
-   curl_easy_perform(curl);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
    {
@@ -484,6 +515,7 @@ RETURN schedulejob(
    )
 {
    char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
@@ -496,23 +528,27 @@ RETURN schedulejob(
       goto TERMINATE;
    }
 
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", jobid);
-   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
-   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* we want an empty POST request */
-   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "") );
 
-   curl_easy_perform(curl);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.length > 2 )
    {
@@ -547,6 +583,7 @@ char* jobstatus(
    )
 {
    char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
@@ -561,20 +598,24 @@ char* jobstatus(
       return NULL;
    }
 
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", jobid);
-   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
-   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
-   curl_easy_perform(curl);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )
    {
@@ -626,6 +667,7 @@ void getsolution(
    )
 {
    char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
@@ -644,29 +686,34 @@ void getsolution(
       return;
    }
 
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", jobid);
-   curl_easy_setopt(curl, CURLOPT_URL, strbuffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
    /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
    sprintf(strbuffer, "Authorization: api-key %s", apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
-   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
-   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl);
-   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* get a progress report since this can take time for larger problems */
    progress.curl = curl;
    progress.gev = gev;
    progress.lastruntime = 0;
    progress.isupload = 0;
-   curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl);
-   curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
-   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+   progress.curlerrbuf = curlerrbuf;
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L) );
 
-   curl_easy_perform(curl);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
    if( buffer.content == NULL )
    {

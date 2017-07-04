@@ -716,6 +716,7 @@ void getsolution(
    cJSON* root = NULL;
    cJSON* results = NULL;
    cJSON* status = NULL;
+   cJSON* objval = NULL;
    cJSON* variables = NULL;
    long respcode;
 
@@ -797,8 +798,15 @@ void getsolution(
       goto TERMINATE;
    }
 
-   gevLogPChar(gev, "Status: ");
-   gevLog(gev, status->valuestring);
+   gevLogStatPChar(gev, "Status: ");
+   gevLogStat(gev, status->valuestring);
+
+   objval = cJSON_GetObjectItem(results, "objective_value");
+   if( objval != NULL && cJSON_IsNumber(objval) )
+   {
+      sprintf(strbuffer, "Objective Value: %.10e\n", objval->valuedouble);
+      gevLogStatPChar(gev, strbuffer);
+   }
 
    if( strcmp(status->valuestring, "optimal") == 0 )
    {

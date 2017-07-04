@@ -1,5 +1,4 @@
 /* TODO:
- * - interrupt job when timelimit reached
  * - reuse curl handle
  * - option to enable curl verbose output
  *
@@ -504,8 +503,6 @@ char* submitjob(
 
    idstr = strdup(id->valuestring);
 
-   gevLogPChar(gev, "Finished submission. Job ID: "); gevLog(gev, idstr);
-
 TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
@@ -540,6 +537,8 @@ RETURN schedulejob(
    struct curl_slist* headers = NULL;
    int rc = RETURN_ERROR;
    long respcode;
+
+   gevLogPChar(gev, "Scheduling Job. ID: "); gevLog(gev, jobid);
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -1135,6 +1134,7 @@ int main(int argc, char** argv)
    char* apikey = NULL;
    char* jobid = NULL;
    char* status = NULL;
+   double reslim, res;
 
    if (argc < 2)
    {
@@ -1211,19 +1211,32 @@ int main(int argc, char** argv)
    if( schedulejob(gev, apikey, jobid) != RETURN_OK )
       goto TERMINATE;
 
+   reslim = gevGetDblOpt(gev, gevResLim);
+   gevTimeSetStart(gev);
+
    do
    {
       sleep(1);
+      res = gevTimeDiffStart(gev);
+
       free(status);
       status = jobstatus(gev, apikey, jobid);
-      gevLogPChar(gev, "Job Status: ");
-      gevLog(gev, status != NULL ? status : "UNKNOWN");
+      sprintf(buffer, "%8.1fs Job Status: %s\n", res, status != NULL ? status : "UNKNOWN");
+      gevLogPChar(gev, buffer);
 
       if( gevTerminateGet(gev) )
       {
          gevLog(gev, "User Interrupt.\n");
          gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
          gmoSolveStatSet(gmo, gmoSolveStat_User);
+         break;
+      }
+
+      if( res > reslim )
+      {
+         gevLog(gev, "Time limit reached.\n");
+         gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(gmo, gmoSolveStat_Resource);
          break;
       }
    }

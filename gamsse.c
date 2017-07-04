@@ -1099,13 +1099,10 @@ int main(
    if( status != NULL && strcmp(status, "failed") == 0 )
       gmoSolveStatSet(se.gmo, gmoSolveStat_SolverErr);
 
-   /* TODO job logs to get solve_time */
-
-
    rc = EXIT_SUCCESS;
 
 TERMINATE:
-   if( se.jobid != NULL )
+   if( se.jobid != NULL && optGetIntStr(se.opt, "deletejob") )
       deletejob(&se);
 
    if( se.gmo != NULL )

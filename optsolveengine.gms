@@ -15,6 +15,7 @@ set g SolveEngine Option Groups /
       apikey                 Satalia SolveEngine API key
       printjoblist           Prints list of SolveEngine jobs
       debug                  Enabling debug output
+      deletejob              Whether to delete job at termination
 * immediates
       nobounds               ignores bounds on options
       readfile               read secondary option file
@@ -26,6 +27,7 @@ general.(
   apikey          .s.(def '')
   printjoblist    .b.(def 0)
   debug           .i.(def 0, up 2)
+  deletejob       .b.(def 1)
 * immediates
   nobounds        .b.(def 0)
   readfile        .s.(def '')

@@ -31,6 +31,16 @@
 
 typedef struct
 {
+   gmoHandle_t gmo;
+   gevHandle_t gev;
+   optHandle_t opt;
+   char*       apikey;
+   char*       jobid;
+   int         debug;
+} gamsse_t;
+
+typedef struct
+{
    size_t  size;
    size_t  length;
    void*   content;
@@ -250,10 +260,10 @@ char* formattime(
 
 static
 void printjoblist(
-   gevHandle_t gev,
-   char* apikey
+   gamsse_t* se
 )
 {
+   gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -278,8 +288,8 @@ void printjoblist(
 
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -394,12 +404,12 @@ TERMINATE :
 
 /* returns job id */
 static
-char* submitjob(
-   gmoHandle_t gmo,
-   gevHandle_t gev,
-   char* apikey
+RETURN submitjob(
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
+   gmoHandle_t gmo = se->gmo;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -412,6 +422,9 @@ char* submitjob(
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
    progress_t progress;
    long respcode;
+   RETURN rc = RETURN_ERROR;
+
+   assert(se->jobid == NULL);
 
    gevLog(gev, "Submitting Job.");
 
@@ -419,7 +432,7 @@ char* submitjob(
    if( curl == NULL )
    {
       gevLogStat(gev, "submitjob: Error in curl_easy_init()\n");
-      return NULL;
+      return rc;
    }
 
    /* buffer for curl to store error message */
@@ -428,8 +441,8 @@ char* submitjob(
 
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs") );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -501,7 +514,8 @@ char* submitjob(
       goto TERMINATE;
    }
 
-   idstr = strdup(id->valuestring);
+   se->jobid = strdup(id->valuestring);
+   rc = RETURN_OK;
 
 TERMINATE :
    if( root != NULL )
@@ -519,17 +533,16 @@ TERMINATE :
    exitbuffer(&buffer);
    exitbuffer(&encodeprob.buffer);
 
-   return idstr;
+   return rc;
 }
 
 /* schedule a job to be run */
 static
 RETURN schedulejob(
-   gevHandle_t gev,
-   char* apikey,
-   char* jobid
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -538,7 +551,7 @@ RETURN schedulejob(
    int rc = RETURN_ERROR;
    long respcode;
 
-   gevLogPChar(gev, "Scheduling Job. ID: "); gevLog(gev, jobid);
+   gevLogPChar(gev, "Scheduling Job. ID: "); gevLog(gev, se->jobid);
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -551,11 +564,12 @@ RETURN schedulejob(
    *curlerrbuf = '\0';
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", jobid);
+   assert(se->jobid != NULL);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", se->jobid);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -607,11 +621,10 @@ TERMINATE:
 /* job status */
 static
 char* jobstatus(
-   gevHandle_t gev,
-   char* apikey,
-   char* jobid
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -633,11 +646,12 @@ char* jobstatus(
    *curlerrbuf = '\0';
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", jobid);
+   assert(se->jobid != NULL);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", se->jobid);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -701,12 +715,11 @@ TERMINATE :
 /* solution */
 static
 void getsolution(
-   gmoHandle_t gmo,
-   gevHandle_t gev,
-   char* apikey,
-   char* jobid
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
+   gmoHandle_t gmo = se->gmo;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -733,11 +746,12 @@ void getsolution(
    *curlerrbuf = '\0';
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", jobid);
+   assert(se->jobid != NULL);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", se->jobid);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -896,11 +910,10 @@ TERMINATE :
 /* stop a started job */
 static
 void stopjob(
-   gevHandle_t gev,
-   char* apikey,
-   char* jobid
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -922,11 +935,12 @@ void stopjob(
    *curlerrbuf = '\0';
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/stop", jobid);
+   assert(se->jobid != NULL);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/stop", se->jobid);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -968,17 +982,15 @@ TERMINATE :
       curl_slist_free_all(headers);
 
    exitbuffer(&buffer);
-
 }
 
 /* stop a started job, doesn't seem to delete the job */
 static
 void deletejob(
-   gevHandle_t gev,
-   char* apikey,
-   char* jobid
+   gamsse_t* se
    )
 {
+   gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
    buffer_t buffer = BUFFERINIT;
@@ -1000,11 +1012,12 @@ void deletejob(
    *curlerrbuf = '\0';
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
 
-   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s", jobid);
+   assert(se->jobid != NULL);
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s", se->jobid);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
 
-   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
-   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   assert(se->apikey != NULL);
+   sprintf(strbuffer, "Authorization: api-key %s", se->apikey);
    headers = curl_slist_append(NULL, strbuffer);
    assert(headers != NULL);
    CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
@@ -1050,12 +1063,12 @@ TERMINATE :
 
 
 int getoptions(
-   gmoHandle_t gmo,
-   gevHandle_t gev,
-   optHandle_t opt,
+   gamsse_t*   se,
    char*       optfilename
 )
 {
+   gevHandle_t gev = se->gev;
+   optHandle_t opt = se->opt;
    char buffer[GMS_SSSIZE+30];
    int ival;
    int i;
@@ -1090,10 +1103,10 @@ int getoptions(
    optEOLOnlySet(opt, 1);
 
    /* initialize options object by getting defaults from options settings file and optionally read user options file */
-   if( optfilename != NULL || gmoOptFile(gmo) > 0 )
+   if( optfilename != NULL || gmoOptFile(se->gmo) > 0 )
    {
       if( optfilename == NULL )
-         gmoNameOptFile(gmo, buffer);
+         gmoNameOptFile(se->gmo, buffer);
       else
          strcpy(buffer, optfilename);
 
@@ -1133,17 +1146,16 @@ int getoptions(
    return 0;
 }
 
-int main(int argc, char** argv)
+int main(
+   int    argc,
+   char** argv
+)
 {
-   gmoHandle_t gmo = NULL;
-   gevHandle_t gev = NULL;
-   optHandle_t opt = NULL;
    int rc = EXIT_FAILURE;
    char buffer[1024];
-   char* apikey = NULL;
-   char* jobid = NULL;
    char* status = NULL;
    double reslim, res;
+   gamsse_t se;
 
    if (argc < 2)
    {
@@ -1151,102 +1163,100 @@ int main(int argc, char** argv)
       return 1;
    }
 
+   memset(&se, 0, sizeof(gamsse_t));
+
    curl_global_init(CURL_GLOBAL_ALL);
 
    /* GAMS create GMO, GEV, and OPT handles */
-   if( !gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)) || !optCreate(&opt, buffer, sizeof(buffer)) )
+   if( !gmoCreate(&se.gmo, buffer, sizeof(buffer)) || !gevCreate(&se.gev, buffer, sizeof(buffer)) || !optCreate(&se.opt, buffer, sizeof(buffer)) )
    {
       fprintf(stderr, "%s\n", buffer);
       goto TERMINATE;
    }
 
    /* GAMS load control file */
-   if( gevInitEnvironmentLegacy(gev, argv[1]) )
+   if( gevInitEnvironmentLegacy(se.gev, argv[1]) )
    {
       fprintf(stderr, "Could not load control file %s\n", argv[1]);
       goto TERMINATE;
    }
 
    /* GAMS let gmo know about gev */
-   if( gmoRegisterEnvironment(gmo, gev, buffer) )
+   if( gmoRegisterEnvironment(se.gmo, se.gev, buffer) )
    {
       fprintf(stderr, "Error registering GAMS Environment: %s\n", buffer);
       goto TERMINATE;
    }
 
    /* GAMS load instance data */
-   if( gmoLoadDataLegacy(gmo, buffer) )
+   if( gmoLoadDataLegacy(se.gmo, buffer) )
    {
       fprintf(stderr, "Could not load model data.\n");
       goto TERMINATE;
    }
 
-   gevLogStat(gev, "This is the GAMS link to Satalia SolveEngine.");
+   gevLogStat(se.gev, "This is the GAMS link to Satalia SolveEngine.");
 
-   gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
-   gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
+   gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
+   gmoSolveStatSet(se.gmo, gmoSolveStat_SystemErr);
 
-   if( getoptions(gmo, gev, opt, argc >= 3 ? argv[2] : NULL) )
+   if( getoptions(&se, argc >= 3 ? argv[2] : NULL) )
       goto TERMINATE;
 
-   optGetStrStr(opt, "apikey", buffer);
+   optGetStrStr(se.opt, "apikey", buffer);
    if( *buffer == '\0' )
    {
-      gevLogStat(gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
+      gevLogStat(se.gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
       goto TERMINATE;
    }
    if( strlen(buffer) > 50 ) /* mine is 45 chars */
    {
-      gevLogStat(gev, "Invalid API key: too long. Exiting.");
+      gevLogStat(se.gev, "Invalid API key: too long. Exiting.");
       goto TERMINATE;
    }
-   apikey = strdup(buffer);
+   se.apikey = strdup(buffer);
 
-   if( optGetIntStr(opt, "printjoblist") )
-      printjoblist(gev, apikey);
+   if( optGetIntStr(se.opt, "printjoblist") )
+      printjoblist(&se);
 
    /* get the problem into a normal form */
-   gmoObjStyleSet(gmo, gmoObjType_Fun);
-   gmoObjReformSet(gmo, 1);
-   gmoIndexBaseSet(gmo, 0);
-   gmoSetNRowPerm(gmo); /* hide =N= rows */
+   gmoObjStyleSet(se.gmo, gmoObjType_Fun);
+   gmoObjReformSet(se.gmo, 1);
+   gmoIndexBaseSet(se.gmo, 0);
+   gmoSetNRowPerm(se.gmo); /* hide =N= rows */
 
-   jobid = submitjob(gmo, gev, apikey);
-   if( jobid == NULL )
-   {
-      gevLogStat(gev, "Could not retrieve jobID.");
-      goto TERMINATE;
-   }
-
-   if( schedulejob(gev, apikey, jobid) != RETURN_OK )
+   if( submitjob(&se) != RETURN_OK )
       goto TERMINATE;
 
-   reslim = gevGetDblOpt(gev, gevResLim);
-   gevTimeSetStart(gev);
+   if( schedulejob(&se) != RETURN_OK )
+      goto TERMINATE;
+
+   reslim = gevGetDblOpt(se.gev, gevResLim);
+   gevTimeSetStart(se.gev);
 
    do
    {
       sleep(1);
-      res = gevTimeDiffStart(gev);
+      res = gevTimeDiffStart(se.gev);
 
       free(status);
-      status = jobstatus(gev, apikey, jobid);
+      status = jobstatus(&se);
       sprintf(buffer, "%8.1fs Job Status: %s\n", res, status != NULL ? status : "UNKNOWN");
-      gevLogPChar(gev, buffer);
+      gevLogPChar(se.gev, buffer);
 
-      if( gevTerminateGet(gev) )
+      if( gevTerminateGet(se.gev) )
       {
-         gevLog(gev, "User Interrupt.\n");
-         gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
-         gmoSolveStatSet(gmo, gmoSolveStat_User);
+         gevLog(se.gev, "User Interrupt.\n");
+         gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(se.gmo, gmoSolveStat_User);
          break;
       }
 
       if( res > reslim )
       {
-         gevLog(gev, "Time limit reached.\n");
-         gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
-         gmoSolveStatSet(gmo, gmoSolveStat_Resource);
+         gevLog(se.gev, "Time limit reached.\n");
+         gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(se.gmo, gmoSolveStat_Resource);
          break;
       }
    }
@@ -1256,19 +1266,19 @@ int main(int argc, char** argv)
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0) );
 
-   gmoSetHeadnTail(gmo, gmoHresused, gevTimeDiffStart(gev));
+   gmoSetHeadnTail(se.gmo, gmoHresused, gevTimeDiffStart(se.gev));
 
    /* if job has been completed, then get results */
    if( status != NULL && strcmp(status, "completed") == 0 )
-      getsolution(gmo, gev, apikey, jobid);
+      getsolution(&se);
 
    /* if job has been interrupted (Ctrl+C), then stop it */
    if( status != NULL && (strcmp(status, "started") == 0 || strcmp(status, "starting") == 0) )
-      stopjob(gev, apikey, jobid);
+      stopjob(&se);
 
    /* if job has failed, then return solver error (instead of system error) */
    if( status != NULL && strcmp(status, "failed") == 0 )
-      gmoSolveStatSet(gmo, gmoSolveStat_SolverErr);
+      gmoSolveStatSet(se.gmo, gmoSolveStat_SolverErr);
 
    /* TODO job logs to get solve_time */
 
@@ -1276,28 +1286,28 @@ int main(int argc, char** argv)
    rc = EXIT_SUCCESS;
 
 TERMINATE:
-   if( jobid != NULL )
-      deletejob(gev, apikey, jobid);
+   if( se.jobid != NULL )
+      deletejob(&se);
 
-   if( gmo != NULL )
+   if( se.gmo != NULL )
    {
-      gmoUnloadSolutionLegacy(gmo);
-      gmoFree(&gmo);
+      gmoUnloadSolutionLegacy(se.gmo);
+      gmoFree(&se.gmo);
    }
-   if( gev != NULL )
-      gevFree(&gev);
+   if( se.gev != NULL )
+      gevFree(&se.gev);
 
-   if( opt != NULL )
-      optFree(&opt);
+   if( se.opt != NULL )
+      optFree(&se.opt);
 
    curl_global_cleanup();
 
    gmoLibraryUnload();
    gevLibraryUnload();
 
-   free(jobid);
+   free(se.jobid);
+   free(se.apikey);
    free(status);
-   free(apikey);
 
    return rc;
 }

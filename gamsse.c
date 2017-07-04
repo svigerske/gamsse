@@ -413,7 +413,7 @@ char* submitjob(
    progress_t progress;
    long respcode;
 
-   gevLog(gev, "Submitting Job");
+   gevLog(gev, "Submitting Job.");
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -720,7 +720,7 @@ void getsolution(
    cJSON* variables = NULL;
    long respcode;
 
-   gevLog(gev, "Query Solution");
+   gevLog(gev, "Retrieving results.");
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -986,7 +986,7 @@ void deletejob(
    progress_t progress;
    long respcode;
 
-   gevLog(gev, "Deleting job");
+   /* gevLog(gev, "Deleting job"); */
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -1201,7 +1201,8 @@ int main(int argc, char** argv)
    }
    apikey = strdup(buffer);
 
-   printjoblist(gev, apikey);
+   if( optGetIntStr(opt, "printjoblist") )
+      printjoblist(gev, apikey);
 
    /* get the problem into a normal form */
    gmoObjStyleSet(gmo, gmoObjType_Fun);

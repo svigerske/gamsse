@@ -13,6 +13,7 @@ set g SolveEngine Option Groups /
       /
     o Options /
       apikey                 Satalia SolveEngine API key
+      printjoblist           Prints list of SolveEngine jobs
 * immediates
       nobounds               ignores bounds on options
       readfile               read secondary option file
@@ -22,6 +23,7 @@ $onembedded
 optdata(g,o,t,f) /
 general.(
   apikey          .s.(def '')
+  printjoblist    .b.(def 0)
 * immediates
   nobounds        .b.(def 0)
   readfile        .s.(def '')

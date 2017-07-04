@@ -50,6 +50,9 @@ typedef struct
    char        curlerrbuf[CURL_ERROR_SIZE];   /**< buffer for curl to store error message */
    struct curl_slist* curlheaders;
    buffer_t    curlwritebuf;
+
+   double      progresslastruntime;
+   int         progressisupload;
 } gamsse_t;
 
 /** struct for writing problem into base64-encoded string */
@@ -58,16 +61,6 @@ typedef struct
    buffer_t           buffer;
    base64_encodestate es;
 } encodeprob_t;
-
-
-typedef struct
-{
-   double      lastruntime;
-   CURL*       curl;
-   gevHandle_t gev;
-   int         isupload;
-   char*       curlerrbuf;
-} progress_t;
 
 #define CURL_CHECK( se, code ) \
    do \
@@ -201,22 +194,24 @@ static int progressreportCurl(
    curl_off_t ulnow
    )
 {
-   progress_t* progress = (progress_t*) p;
+   gamsse_t* se = (gamsse_t*) p;
    double curtime = 0.0;
    char buf[GMS_SSSIZE];
 
-   assert(progress != NULL);
+   assert(se!= NULL);
 
-   curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime); /* TODO add CURL_CHECK */
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_TOTAL_TIME, &curtime) );
 
    /* don't print if less than 1 second passed since last print */
-   if( (curtime - progress->lastruntime) < 1.0 )
+   if( (curtime - se->progresslastruntime) < 1.0 )
       return 0;
-   progress->lastruntime = curtime;
+   se->progresslastruntime = curtime;
 
    sprintf(buf, "%6.1fs: %" CURL_FORMAT_CURL_OFF_T " of %" CURL_FORMAT_CURL_OFF_T " bytes %s\n", curtime,
-      progress->isupload ? ulnow : dlnow, progress->isupload ? ultotal : dltotal, progress->isupload ? "uploaded" : "downloaded");
-   gevLogPChar(progress->gev, buf);
+      se->progressisupload ? ulnow : dlnow, se->progressisupload ? ultotal : dltotal, se->progressisupload ? "uploaded" : "downloaded");
+   gevLogPChar(se->gev, buf);
+
+   /* TODO check Ctrl+C */
 
 TERMINATE:
    return 0;
@@ -483,7 +478,6 @@ RETURN submitjob(
    char* idstr = NULL;
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
-   progress_t progress;
    long respcode;
    RETURN rc = RETURN_ERROR;
 
@@ -517,13 +511,10 @@ RETURN submitjob(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
 
    /* get a progress report since this can take time for larger problems */
-   progress.curl = se->curl;
-   progress.gev = gev;
-   progress.lastruntime = 0;
-   progress.isupload = 1;
-   progress.curlerrbuf = se->curlerrbuf;
+   se->progresslastruntime = 0;
+   se->progressisupload = 1;
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, se) );
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
@@ -642,7 +633,6 @@ void getsolution(
    gevHandle_t gev = se->gev;
    gmoHandle_t gmo = se->gmo;
    char strbuffer[1024];
-   progress_t progress;
    cJSON* root = NULL;
    cJSON* results = NULL;
    cJSON* status = NULL;
@@ -660,13 +650,10 @@ void getsolution(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
    /* get a progress report since this can take time for larger problems */
-   progress.curl = se->curl;
-   progress.gev = gev;
-   progress.lastruntime = 0;
-   progress.isupload = 0;
-   progress.curlerrbuf = se->curlerrbuf;
+   se->progresslastruntime = 0;
+   se->progressisupload = 0;
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, se) );
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
@@ -785,7 +772,6 @@ void stopjob(
    char curlerrbuf[CURL_ERROR_SIZE];
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
-   progress_t progress;
    long respcode;
 
    gevLog(gev, "Stop job");
@@ -825,7 +811,6 @@ void deletejob(
    char curlerrbuf[CURL_ERROR_SIZE];
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
-   progress_t progress;
    long respcode;
 
    /* gevLog(gev, "Deleting job"); */

@@ -211,7 +211,13 @@ static int progressreportCurl(
       se->progressisupload ? ulnow : dlnow, se->progressisupload ? ultotal : dltotal, se->progressisupload ? "uploaded" : "downloaded");
    gevLogPChar(se->gev, buf);
 
-   /* TODO check Ctrl+C */
+   /* stop curl if user interrupt */
+   if( gevTerminateGet(se->gev) )
+   {
+      gevLog(se->gev, "User interrupt.");
+      gmoSolveStatSet(se->gmo, gmoSolveStat_User);
+      return 1;
+   }
 
 TERMINATE:
    return 0;
@@ -774,7 +780,7 @@ void stopjob(
    struct curl_slist* headers = NULL;
    long respcode;
 
-   gevLog(gev, "Stop job");
+   /* gevLog(gev, "Stop job"); */
 
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;

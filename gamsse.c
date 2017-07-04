@@ -1148,6 +1148,7 @@ int main(int argc, char** argv)
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0) );
 
+   /* if job has been completed, then get results */
    if( status != NULL && strcmp(status, "completed") == 0 )
       getsolution(gmo, gev, apikey, jobid);
 
@@ -1155,7 +1156,9 @@ int main(int argc, char** argv)
    if( status != NULL && (strcmp(status, "started") == 0 || strcmp(status, "starting") == 0) )
       stopjob(gev, apikey, jobid);
 
-   /* TODO handle status = failed and status = stopped */
+   /* if job has failed, then return solver error (instead of system error) */
+   if( status != NULL && strcmp(status, "failed") == 0 )
+      gmoSolveStatSet(gmo, gmoSolveStat_SolverErr);
 
    /* TODO job logs to get solve_time */
 

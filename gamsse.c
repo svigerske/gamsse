@@ -870,6 +870,7 @@ void getsolution(
       gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
       gmoSolveStatSet(gmo, gmoSolveStat_Normal);
 
+      gmoSetHeadnTail(gmo, gmoHmarginals, 0);
       gmoCompleteSolution(gmo);
    }
    else
@@ -1254,6 +1255,8 @@ int main(int argc, char** argv)
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0) );
+
+   gmoSetHeadnTail(gmo, gmoHresused, gevTimeDiffStart(gev));
 
    /* if job has been completed, then get results */
    if( status != NULL && strcmp(status, "completed") == 0 )

@@ -67,18 +67,18 @@ typedef struct
    char*       curlerrbuf;
 } progress_t;
 
-#define CURL_CHECK( gev, errbuf, code ) \
+#define CURL_CHECK( se, code ) \
    do \
    { \
       CURLcode curlres; \
       curlres = code; \
       if( curlres != CURLE_OK ) \
       { \
-         gevLogStatPChar(gev, "libcurl: "); \
-         if( *errbuf != '\0' ) \
-            gevLogStat(gev, errbuf); \
+         gevLogStatPChar((se)->gev, "libcurl: "); \
+         if( *(se)->curlerrbuf != '\0' ) \
+            gevLogStat((se)->gev, (se)->curlerrbuf); \
          else \
-            gevLogStat(gev, curl_easy_strerror(curlres)); \
+            gevLogStat((se)->gev, curl_easy_strerror(curlres)); \
          goto TERMINATE; \
       } \
    } while( 0 )
@@ -205,7 +205,7 @@ static int progressreportCurl(
 
    assert(progress != NULL);
 
-   CURL_CHECK( progress->curl, progress->curlerrbuf, curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime) );
+   curl_easy_getinfo(progress->curl, CURLINFO_TOTAL_TIME, &curtime); /* TODO add CURL_CHECK */
 
    /* don't print if less than 1 second passed since last print */
    if( (curtime - progress->lastruntime) < 1.0 )
@@ -307,10 +307,10 @@ RETURN resetCurl(
 
    /* set error buffer */
    *se->curlerrbuf = '\0';
-   CURL_CHECK( se->gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_ERRORBUFFER, se->curlerrbuf) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_ERRORBUFFER, se->curlerrbuf) );
 
    /* set http header (api key) */
-   CURL_CHECK( se->gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_HTTPHEADER, se->curlheaders) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_HTTPHEADER, se->curlheaders) );
 
    /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
 
@@ -336,13 +336,13 @@ void printjoblist(
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
    {
@@ -352,7 +352,7 @@ void printjoblist(
    ((char*)buffer.content)[buffer.length] = '\0';
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure retrieving joblist from SolveEngine:");
@@ -465,10 +465,10 @@ RETURN submitjob(
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs") );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs") );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* post fields */
    appendbuffer(&encodeprob.buffer, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
@@ -488,7 +488,7 @@ RETURN submitjob(
    }
    encodeprob.buffer.length += base64_encode_blockend(encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
    appendbuffer(&encodeprob.buffer, "\"}]}");
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
 
    /* get a progress report since this can take time for larger problems */
    progress.curl = se->curl;
@@ -496,12 +496,12 @@ RETURN submitjob(
    progress.lastruntime = 0;
    progress.isupload = 1;
    progress.curlerrbuf = se->curlerrbuf;
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    if( buffer.content == NULL )  /* got no output at all */
    {
@@ -511,7 +511,7 @@ RETURN submitjob(
    ((char*)buffer.content)[buffer.length] = '\0';
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure submitting job to SolveEngine:");
@@ -568,19 +568,19 @@ RETURN schedulejob(
 
    assert(se->jobid != NULL);
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", se->jobid);
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* we want an empty POST request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, "") );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, "") );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure scheduling job:");
@@ -626,13 +626,13 @@ char* jobstatus(
 
    assert(se->jobid != NULL);
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", se->jobid);
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    if( buffer.content == NULL )
    {
@@ -642,7 +642,7 @@ char* jobstatus(
    ((char*)buffer.content)[buffer.length] = '\0';
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure retrieving job status:");
@@ -702,10 +702,10 @@ void getsolution(
 
    assert(se->jobid != NULL);
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", se->jobid);
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* get a progress report since this can take time for larger problems */
    progress.curl = se->curl;
@@ -713,12 +713,12 @@ void getsolution(
    progress.lastruntime = 0;
    progress.isupload = 0;
    progress.curlerrbuf = se->curlerrbuf;
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFOFUNCTION, progressreportCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_XFERINFODATA, &progress) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    if( buffer.content == NULL )
    {
@@ -728,7 +728,7 @@ void getsolution(
    ((char*)buffer.content)[buffer.length] = '\0';
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure getting solution:");
@@ -870,18 +870,18 @@ void stopjob(
 
    assert(se->jobid != NULL);
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/stop", se->jobid);
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure stopping job:");
@@ -926,18 +926,18 @@ void deletejob(
 
    assert(se->jobid != NULL);
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s", se->jobid);
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* perform HTTP request */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_perform(se->curl) );
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
 
    /* check HTTP response code */
-   CURL_CHECK( gev, se->curlerrbuf, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure deleting job:");

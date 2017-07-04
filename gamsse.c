@@ -1,7 +1,6 @@
 /* TODO:
  * - interrupt job when timelimit reached
  * - reuse curl handle
- * - read apikey from option file
  * - option to enable curl verbose output
  *
  * Links:
@@ -27,6 +26,7 @@
 
 #include "gmomcc.h"
 #include "gevmcc.h"
+#include "optcc.h"
 
 #include "convert.h"
 
@@ -979,7 +979,7 @@ void deletejob(
    progress_t progress;
    long respcode;
 
-   gevLog(gev, "Delete job");
+   gevLog(gev, "Deleting job");
 
    curl = curl_easy_init();
    if( curl == NULL )
@@ -1040,26 +1040,112 @@ TERMINATE :
    exitbuffer(&buffer);
 }
 
+
+int getoptions(
+   gmoHandle_t gmo,
+   gevHandle_t gev,
+   optHandle_t opt,
+   char*       optfilename
+)
+{
+   char buffer[GMS_SSSIZE+30];
+   int ival;
+   int i;
+
+   assert(opt != NULL);
+
+   /* gevGetStrOpt(gev, gevNameSysDir, buffer); */ *buffer = '\0';
+   strcat(buffer, "optsolveengine.def");
+
+   if( optReadDefinition(opt, buffer) )
+   {
+      gevStatCon(gev);
+      for( i = 1; i <= optMessageCount(opt); ++i )
+      {
+         optGetMessage(opt, i, buffer, &ival);
+         gevLogStat(gev, buffer);
+      }
+      gevStatCoff(gev);
+      optClearMessages(opt);
+      return 1;
+   }
+   gevStatCon(gev);
+   for( int i = 1; i <= optMessageCount(opt); ++i)
+   {
+      optGetMessage(opt, i, buffer, &ival);
+      gevLogStat(gev, buffer);
+   }
+   gevStatCoff(gev);
+   optClearMessages(opt);
+
+   /* We don't want the user to quote string options that contain spaces, so we run in EOLonly mode */
+   optEOLOnlySet(opt, 1);
+
+   /* initialize options object by getting defaults from options settings file and optionally read user options file */
+   if( optfilename != NULL || gmoOptFile(gmo) > 0 )
+   {
+      if( optfilename == NULL )
+         gmoNameOptFile(gmo, buffer);
+      else
+         strcpy(buffer, optfilename);
+
+      optEchoSet(opt, 1);
+      optReadParameterFile(opt, buffer);
+      /* Echo */
+      gevStatCon(gev);
+      for( int i = 1; i <= optMessageCount(opt); ++i)
+      {
+         optGetMessage(opt, i, buffer, &ival);
+         if( ival <= optMsgFileLeave || ival == optMsgUserError)
+         {
+            /* don't echo api key log */
+            char* key;
+            key = strstr(buffer, "apikey");  /* TODO do case insensitive */
+            if( key != NULL )
+               strcpy(key+6, " ***hidden***");
+
+            gevLogStat(gev, buffer);
+         }
+      }
+      gevStatCoff(gev);
+      optClearMessages(opt);
+      optEchoSet(opt, 0);
+   }
+
+   if( !optGetDefinedStr(opt, "apikey") )
+   {
+      /* check whether we have an API key for SolveEngine in the environment */
+      char* apikey;
+
+      apikey = getenv("SOLVEENGINE_APIKEY");
+      if( apikey != NULL )
+         optSetStrStr(opt, "apikey", apikey);
+   }
+
+   return 0;
+}
+
 int main(int argc, char** argv)
 {
    gmoHandle_t gmo = NULL;
    gevHandle_t gev = NULL;
+   optHandle_t opt = NULL;
    int rc = EXIT_FAILURE;
    char buffer[1024];
-   char* apikey;
+   char* apikey = NULL;
    char* jobid = NULL;
    char* status = NULL;
 
    if (argc < 2)
    {
-      printf("usage: %s <cntrlfile>\n", argv[0]);
+      printf("usage: %s <cntrlfile> [<optfile>]\n", argv[0]);
       return 1;
    }
 
    curl_global_init(CURL_GLOBAL_ALL);
 
-   /* GAMS initialize GMO and GEV libraries */
-   if( !gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)) )
+   /* GAMS create GMO, GEV, and OPT handles */
+   if( !gmoCreate(&gmo, buffer, sizeof(buffer)) || !gevCreate(&gev, buffer, sizeof(buffer)) || !optCreate(&opt, buffer, sizeof(buffer)) )
    {
       fprintf(stderr, "%s\n", buffer);
       goto TERMINATE;
@@ -1091,22 +1177,21 @@ int main(int argc, char** argv)
    gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
    gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
 
-   /* check whether we have an API key for SolveEngine */
-   apikey = getenv("SOLVEENGINE_APIKEY");
-   if( apikey == NULL )
+   if( getoptions(gmo, gev, opt, argc >= 3 ? argv[2] : NULL) )
+      goto TERMINATE;
+
+   optGetStrStr(opt, "apikey", buffer);
+   if( *buffer == '\0' )
    {
-      gevLogStat(gev, "No SolveEngine API key found in environment (SOLVEENGINE_APIKEY). Exiting.");
+      gevLogStat(gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
       goto TERMINATE;
    }
-   else if( strlen(apikey) > 50 ) /* mine is 45 chars */
+   if( strlen(buffer) > 50 ) /* mine is 45 chars */
    {
-      gevLogStat(gev, "Invalid API key found in environment (SOLVEENGINE_APIKEY): too long. Exiting.");
+      gevLogStat(gev, "Invalid API key: too long. Exiting.");
       goto TERMINATE;
    }
-   else
-   {
-      gevLog(gev, "Found API key in environment.");
-   }
+   apikey = strdup(buffer);
 
    printjoblist(gev, apikey);
 
@@ -1169,13 +1254,16 @@ TERMINATE:
    if( jobid != NULL )
       deletejob(gev, apikey, jobid);
 
-   if(gmo != NULL)
+   if( gmo != NULL )
    {
       gmoUnloadSolutionLegacy(gmo);
       gmoFree(&gmo);
    }
-   if(gev != NULL)
+   if( gev != NULL )
       gevFree(&gev);
+
+   if( opt != NULL )
+      optFree(&opt);
 
    curl_global_cleanup();
 
@@ -1184,6 +1272,7 @@ TERMINATE:
 
    free(jobid);
    free(status);
+   free(apikey);
 
    return rc;
 }

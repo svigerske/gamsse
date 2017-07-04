@@ -30,6 +30,15 @@
 
 typedef struct
 {
+   size_t  size;
+   size_t  length;
+   void*   content;
+} buffer_t;
+
+#define BUFFERINIT {0,0,NULL}
+
+typedef struct
+{
    gmoHandle_t gmo;
    gevHandle_t gev;
    optHandle_t opt;
@@ -40,14 +49,8 @@ typedef struct
    CURL*       curl;
    char        curlerrbuf[CURL_ERROR_SIZE];   /**< buffer for curl to store error message */
    struct curl_slist* curlheaders;
+   buffer_t    curlwritebuf;
 } gamsse_t;
-
-typedef struct
-{
-   size_t  size;
-   size_t  length;
-   void*   content;
-} buffer_t;
 
 /** struct for writing problem into base64-encoded string */
 typedef struct
@@ -56,7 +59,6 @@ typedef struct
    base64_encodestate es;
 } encodeprob_t;
 
-#define BUFFERINIT {0,0,NULL}
 
 typedef struct
 {
@@ -309,6 +311,11 @@ RETURN resetCurl(
    *se->curlerrbuf = '\0';
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_ERRORBUFFER, se->curlerrbuf) );
 
+   /* set write buffer */
+   se->curlwritebuf.length = 0;
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &se->curlwritebuf) );
+
    /* set http header (api key) */
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_HTTPHEADER, se->curlheaders) );
 
@@ -326,7 +333,6 @@ void printjoblist(
 {
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
-   buffer_t buffer = BUFFERINIT;
    cJSON* root = NULL;
    cJSON* jobs = NULL;
    cJSON* total = NULL;
@@ -338,33 +344,30 @@ void printjoblist(
 
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
-   if( buffer.content == NULL )  /* got no output at all */
+   if( se->curlwritebuf.content == NULL )  /* got no output at all */
    {
       gevLogStat(gev, "printjoblist: Failure retrieving joblist from SolveEngine.");
       goto TERMINATE;
    }
-   ((char*)buffer.content)[buffer.length] = '\0';
+   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
 
    /* check HTTP response code */
    CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure retrieving joblist from SolveEngine:");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   root = cJSON_Parse((char*)buffer.content);
+   root = cJSON_Parse((char*)se->curlwritebuf.content);
    if( root == NULL )
    {
       gevLogStatPChar(gev, "printjoblist: Failure parsing joblist from SolveEngine. Content: ");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
       goto TERMINATE;
    }
@@ -436,7 +439,6 @@ TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
 
-   exitbuffer(&buffer);
 }
 
 /* returns job id */
@@ -448,7 +450,6 @@ RETURN submitjob(
    gevHandle_t gev = se->gev;
    gmoHandle_t gmo = se->gmo;
    char strbuffer[1024];
-   buffer_t buffer = BUFFERINIT;
    cJSON* root = NULL;
    cJSON* id = NULL;
    char* idstr = NULL;
@@ -466,9 +467,6 @@ RETURN submitjob(
       goto TERMINATE;
 
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs") );
-
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
 
    /* post fields */
    appendbuffer(&encodeprob.buffer, "{\"options\":{},\"problems\":[{\"name\":\"problem.lp\",\"data\": \"");
@@ -503,23 +501,23 @@ RETURN submitjob(
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
-   if( buffer.content == NULL )  /* got no output at all */
+   if( se->curlwritebuf.content == NULL )  /* got no output at all */
    {
       gevLogStat(gev, "submitjob: Failure submitting job to SolveEngine.");
       goto TERMINATE;
    }
-   ((char*)buffer.content)[buffer.length] = '\0';
+   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
 
    /* check HTTP response code */
    CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure submitting job to SolveEngine:");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   root = cJSON_Parse((char*)buffer.content);
+   root = cJSON_Parse((char*)se->curlwritebuf.content);
    if( root == NULL )
    {
       gevLogStat(gev, "submitjob: Failure parsing response from SolveEngine.");
@@ -543,7 +541,6 @@ TERMINATE :
    if( postfields != NULL )
       postfields = NULL;
 
-   exitbuffer(&buffer);
    exitbuffer(&encodeprob.buffer);
 
    return rc;
@@ -557,7 +554,6 @@ RETURN schedulejob(
 {
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
-   buffer_t buffer = BUFFERINIT;
    int rc = RETURN_ERROR;
    long respcode;
 
@@ -570,9 +566,6 @@ RETURN schedulejob(
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/schedule", se->jobid);
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* we want an empty POST request */
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, "") );
 
@@ -584,26 +577,24 @@ RETURN schedulejob(
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure scheduling job:");
-      if( buffer.content != NULL )
-         gevLogStatPChar(gev, buffer.content);
+      if( se->curlwritebuf.content != NULL )
+         gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   if( buffer.length > 2 )
+   if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(buffer.content != NULL);
-      ((char*)buffer.content)[buffer.length] = '\0';
+      assert(se->curlwritebuf.content != NULL);
+      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "schedulejob: Failed to schedule job: ");
-      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
    }
 
    rc = RETURN_OK;
 
 TERMINATE:
-   exitbuffer(&buffer);
-
    return rc;
 }
 
@@ -615,7 +606,6 @@ char* jobstatus(
 {
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
-   buffer_t buffer = BUFFERINIT;
    cJSON* root = NULL;
    cJSON* status = NULL;
    char* statusstr = NULL;
@@ -628,33 +618,30 @@ char* jobstatus(
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/status", se->jobid);
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
-   if( buffer.content == NULL )
+   if( se->curlwritebuf.content == NULL )
    {
       gevLogStat(gev, "jobstatus: Error retrieving job status.");
       goto TERMINATE;
    }
-   ((char*)buffer.content)[buffer.length] = '\0';
+   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
 
    /* check HTTP response code */
    CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure retrieving job status:");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   root = cJSON_Parse((char*)buffer.content);
+   root = cJSON_Parse((char*)se->curlwritebuf.content);
    if( root == NULL )
    {
       gevLogStatPChar(gev, "jobstatus: Error parsing job status from answer ");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
       goto TERMINATE;
    }
@@ -672,8 +659,6 @@ TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
 
-   exitbuffer(&buffer);
-
    return statusstr;
 }
 
@@ -686,7 +671,6 @@ void getsolution(
    gevHandle_t gev = se->gev;
    gmoHandle_t gmo = se->gmo;
    char strbuffer[1024];
-   buffer_t buffer = BUFFERINIT;
    progress_t progress;
    cJSON* root = NULL;
    cJSON* results = NULL;
@@ -704,9 +688,6 @@ void getsolution(
    sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/results", se->jobid);
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* get a progress report since this can take time for larger problems */
    progress.curl = se->curl;
    progress.gev = gev;
@@ -720,27 +701,27 @@ void getsolution(
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
-   if( buffer.content == NULL )
+   if( se->curlwritebuf.content == NULL )
    {
       gevLogStat(gev, "getsolution: Error retrieving solution.");
       goto TERMINATE;
    }
-   ((char*)buffer.content)[buffer.length] = '\0';
+   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
 
    /* check HTTP response code */
    CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure getting solution:");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   root = cJSON_Parse((char*)buffer.content);
+   root = cJSON_Parse((char*)se->curlwritebuf.content);
    if( root == NULL )
    {
       gevLogStatPChar(gev, "getsolution: Error parsing solution from answer ");
-      gevLogStatPChar(gev, buffer.content);
+      gevLogStatPChar(gev, se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
       goto TERMINATE;
    }
@@ -844,8 +825,6 @@ void getsolution(
 TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
-
-   exitbuffer(&buffer);
 }
 
 /* stop a started job */
@@ -857,7 +836,6 @@ void stopjob(
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
-   buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
    progress_t progress;
@@ -874,9 +852,6 @@ void stopjob(
 
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
@@ -885,23 +860,22 @@ void stopjob(
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure stopping job:");
-      if( buffer.content != NULL )
-         gevLogStatPChar(gev, buffer.content);
+      if( se->curlwritebuf.content != NULL )
+         gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   if( buffer.length > 2 )
+   if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(buffer.content != NULL);
-      ((char*)buffer.content)[buffer.length] = '\0';
+      assert(se->curlwritebuf.content != NULL);
+      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "stopjob: Failure stopping job: ");
-      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
    }
 
-TERMINATE :
-   exitbuffer(&buffer);
+TERMINATE : ;
 }
 
 /* stop a started job, doesn't seem to delete the job */
@@ -913,7 +887,6 @@ void deletejob(
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
    char curlerrbuf[CURL_ERROR_SIZE];
-   buffer_t buffer = BUFFERINIT;
    CURL* curl = NULL;
    struct curl_slist* headers = NULL;
    progress_t progress;
@@ -930,9 +903,6 @@ void deletejob(
 
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
-   CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEDATA, &buffer) );
-
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
@@ -941,23 +911,22 @@ void deletejob(
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure deleting job:");
-      if( buffer.content != NULL )
-         gevLogStatPChar(gev, buffer.content);
+      if( se->curlwritebuf.content != NULL )
+         gevLogStatPChar(gev, se->curlwritebuf.content);
       goto TERMINATE;
    }
 
-   if( buffer.length > 2 )
+   if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(buffer.content != NULL);
-      ((char*)buffer.content)[buffer.length] = '\0';
+      assert(se->curlwritebuf.content != NULL);
+      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "deletejob: Failure deleting job: ");
-      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
    }
 
-TERMINATE :
-   exitbuffer(&buffer);
+TERMINATE : ;
 }
 
 
@@ -1207,6 +1176,8 @@ TERMINATE:
 
    if( se.curl != NULL )
       curl_easy_cleanup(se.curl);
+
+   exitbuffer(&se.curlwritebuf);
 
    curl_global_cleanup();
 

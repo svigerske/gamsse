@@ -4,6 +4,7 @@
 
 apikey string 0 "" 1 1 Satalia SolveEngine API key
 printjoblist boolean 0 0 1 1 Prints list of SolveEngine jobs
+debug integer 0 0 0 2 1 1 Enabling debug output
 nobounds immediate nobounds 0 1 ignores bounds on options
 readfile immediate readfile 0 1 read secondary option file
 *

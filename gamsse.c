@@ -1,5 +1,5 @@
 /* TODO:
- * - option to enable curl verbose output
+ * - trnsport and indus89 answers are wrong (obj correct?)
  *
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
@@ -320,7 +320,11 @@ RETURN resetCurl(
    /* set http header (api key) */
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_HTTPHEADER, se->curlheaders) );
 
-   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   if( se->debug >= 2 )
+   {
+      /* enable curl verbose output */
+      CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_VERBOSE, 1) );
+   }
 
    rc = RETURN_OK;
 TERMINATE:
@@ -342,6 +346,18 @@ RETURN performCurl(
    /* perform HTTP request */
    CURL_CHECK( se, curl_easy_perform(se->curl) );
 
+   if( se->debug )
+   {
+      char* url = NULL;
+      CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_EFFECTIVE_URL, &url) );
+      if( url != NULL )
+      {
+         gevLogPChar(se->gev, "DEBUG Connected to ");
+         gevLogPChar(se->gev, url);
+         gevLogPChar(se->gev, "\n");
+      }
+   }
+
    if( se->curlwritebuf.content == NULL )  /* got no output at all */
    {
       gevLogStat(se->gev, "Failure in connection from SolveEngine: Response is empty.");
@@ -351,8 +367,22 @@ RETURN performCurl(
    /* add terminating \0 */
    ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
 
+   if( se->debug )
+   {
+      gevLogPChar(se->gev, "DEBUG Answer from SolveEngine: ");
+      gevLogPChar(se->gev, (char*)se->curlwritebuf.content);
+      gevLogPChar(se->gev, "\n");
+   }
+
    /* check HTTP response code */
    CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( se->debug )
+   {
+      char buffer[GMS_SSSIZE];
+      sprintf(buffer, "DEBUG HTTP response code: %ld\n", respcode);
+      gevLogPChar(se->gev, buffer);
+   }
+
    if( respcode >= 400 )
    {
       gevLogStat(se->gev, "Failure from SolveEngine:");
@@ -846,7 +876,7 @@ TERMINATE : ;
 }
 
 
-int getoptions(
+int dooptions(
    gamsse_t*   se,
    char*       optfilename
 )
@@ -927,6 +957,8 @@ int getoptions(
          optSetStrStr(opt, "apikey", apikey);
    }
 
+   se->debug = optGetIntStr(opt, "debug");
+
    return 0;
 }
 
@@ -984,7 +1016,7 @@ int main(
    gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
    gmoSolveStatSet(se.gmo, gmoSolveStat_SystemErr);
 
-   if( getoptions(&se, argc >= 3 ? argv[2] : NULL) )
+   if( dooptions(&se, argc >= 3 ? argv[2] : NULL) )
       goto TERMINATE;
 
    optGetStrStr(se.opt, "apikey", buffer);

@@ -1,5 +1,5 @@
 /* TODO:
- * - interrupt job when timelimit reached or Ctrl+C
+ * - interrupt job when timelimit reached
  * - reuse curl handle
  * - read apikey from option file
  * - option to enable curl verbose output
@@ -885,8 +885,7 @@ TERMINATE :
    exitbuffer(&buffer);
 }
 
-#if 0
-/* stop a started job, doesn't seem to delete the job */
+/* stop a started job */
 static
 void stopjob(
    gevHandle_t gev,
@@ -894,19 +893,75 @@ void stopjob(
    char* jobid
    )
 {
-   FILE* out;
-   size_t len;
-   char buffer[1024];
+   char strbuffer[1024];
+   char curlerrbuf[CURL_ERROR_SIZE];
+   buffer_t buffer = BUFFERINIT;
+   CURL* curl = NULL;
+   struct curl_slist* headers = NULL;
+   progress_t progress;
+   long respcode;
 
-   sprintf(buffer, "curl -X DELETE -H \"Authorization: api-key %s\" https://solve.satalia.com/api/v2/jobs/%s/stop", apikey, jobid);
-   printf("Calling %s\n", buffer);
-   out = popen(buffer, "r");
-   len = fread(buffer, sizeof(char), sizeof(buffer), out);
-   buffer[len] = '\0';
-   gevLog(gev, buffer);  /* if everything went fine, then this is empty */
-   pclose(out);
+   gevLog(gev, "Stop job");
+
+   curl = curl_easy_init();
+   if( curl == NULL )
+   {
+      gevLogStat(gev, "stopjob: Error in curl_easy_init()\n");
+      return;
+   }
+
+   /* buffer for curl to store error message */
+   *curlerrbuf = '\0';
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curlerrbuf) );
+
+   sprintf(strbuffer, "https://solve.satalia.com/api/v2/jobs/%s/stop", jobid);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_URL, strbuffer) );
+
+   /* curl_easy_setopt(curl, CURLOPT_XOAUTH2_BEARER, apikey); */
+   sprintf(strbuffer, "Authorization: api-key %s", apikey);
+   headers = curl_slist_append(NULL, strbuffer);
+   assert(headers != NULL);
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers) );
+
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
+
+   /* curl_easy_setopt(curl, CURLOPT_VERBOSE, 1); */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
+   CURL_CHECK( gev, curlerrbuf, curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer) );
+
+   /* perform HTTP request */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
+
+   /* check HTTP response code */
+   CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(gev, "Failure stopping job:");
+      if( buffer.content != NULL )
+         gevLogStatPChar(gev, buffer.content);
+      goto TERMINATE;
+   }
+
+   if( buffer.length > 2 )
+   {
+      /* something else went wrong */
+      assert(buffer.content != NULL);
+      ((char*)buffer.content)[buffer.length] = '\0';
+      gevLogStatPChar(gev, "stopjob: Failure stopping job: ");
+      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, "\n");
+   }
+
+TERMINATE :
+   if( curl != NULL )
+      curl_easy_cleanup(curl);
+
+   if( headers != NULL )
+      curl_slist_free_all(headers);
+
+   exitbuffer(&buffer);
+
 }
-#endif
 
 /* stop a started job, doesn't seem to delete the job */
 static
@@ -955,20 +1010,24 @@ void deletejob(
    /* perform HTTP request */
    CURL_CHECK( gev, curlerrbuf, curl_easy_perform(curl) );
 
-   if( buffer.content == NULL )
-   {
-      gevLogStat(gev, "deletejob: Error retrieving solution.");
-      goto TERMINATE;
-   }
-   ((char*)buffer.content)[buffer.length] = '\0';
-
    /* check HTTP response code */
    CURL_CHECK( gev, curlerrbuf, curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &respcode) );
    if( respcode >= 400 )
    {
       gevLogStat(gev, "Failure deleting job:");
-      gevLogStatPChar(gev, buffer.content);
+      if( buffer.content != NULL )
+         gevLogStatPChar(gev, buffer.content);
       goto TERMINATE;
+   }
+
+   if( buffer.length > 2 )
+   {
+      /* something else went wrong */
+      assert(buffer.content != NULL);
+      ((char*)buffer.content)[buffer.length] = '\0';
+      gevLogStatPChar(gev, "deletejob: Failure deleting job: ");
+      gevLogStatPChar(gev, (char*)buffer.content);
+      gevLogStatPChar(gev, "\n");
    }
 
 TERMINATE :
@@ -1074,6 +1133,14 @@ int main(int argc, char** argv)
       status = jobstatus(gev, apikey, jobid);
       gevLogPChar(gev, "Job Status: ");
       gevLog(gev, status != NULL ? status : "UNKNOWN");
+
+      if( gevTerminateGet(gev) )
+      {
+         gevLog(gev, "User Interrupt.\n");
+         gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(gmo, gmoSolveStat_User);
+         break;
+      }
    }
    while( status != NULL && (
      strcmp(status, "queued") == 0 ||   /* if queued, then we wait for available resources - hope that this wouldn't take too long */
@@ -1084,11 +1151,13 @@ int main(int argc, char** argv)
    if( status != NULL && strcmp(status, "completed") == 0 )
       getsolution(gmo, gev, apikey, jobid);
 
+   /* if job has been interrupted (Ctrl+C), then stop it */
+   if( status != NULL && (strcmp(status, "started") == 0 || strcmp(status, "starting") == 0) )
+      stopjob(gev, apikey, jobid);
+
    /* TODO handle status = failed and status = stopped */
 
    /* TODO job logs to get solve_time */
-
-   /* stopjob(gev, apikey, jobid); */
 
 
    rc = EXIT_SUCCESS;

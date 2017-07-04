@@ -327,6 +327,58 @@ TERMINATE:
 }
 
 static
+RETURN performCurl(
+   gamsse_t* se,
+   cJSON**   json
+)
+{
+   RETURN rc = RETURN_ERROR;
+   long respcode;
+
+   if( json != NULL )
+      *json = NULL;
+
+   /* perform HTTP request */
+   CURL_CHECK( se, curl_easy_perform(se->curl) );
+
+   if( se->curlwritebuf.content == NULL )  /* got no output at all */
+   {
+      gevLogStat(se->gev, "Failure in connection from SolveEngine: Response is empty.");
+      goto TERMINATE;
+   }
+
+   /* add terminating \0 */
+   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
+
+   /* check HTTP response code */
+   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
+   if( respcode >= 400 )
+   {
+      gevLogStat(se->gev, "Failure from SolveEngine:");
+      gevLogStatPChar(se->gev, se->curlwritebuf.content);
+      goto TERMINATE;
+   }
+
+   if( json != NULL )
+   {
+      /* parse response */
+      *json = cJSON_Parse((char*)se->curlwritebuf.content);
+      if( *json == NULL )
+      {
+         gevLogStatPChar(se->gev, "Failure parsing SolveEngine response. Content: ");
+         gevLogStatPChar(se->gev, se->curlwritebuf.content);
+         gevLogStatPChar(se->gev, "\n");
+         goto TERMINATE;
+      }
+   }
+
+   rc = RETURN_OK;
+TERMINATE:
+   return rc;
+}
+
+
+static
 void printjoblist(
    gamsse_t* se
 )
@@ -336,41 +388,18 @@ void printjoblist(
    cJSON* root = NULL;
    cJSON* jobs = NULL;
    cJSON* total = NULL;
-   long respcode;
    int j;
 
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;
 
+   /* set URL */
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, "https://solve.satalia.com/api/v2/jobs?per_page=2147483647") );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   if( se->curlwritebuf.content == NULL )  /* got no output at all */
-   {
-      gevLogStat(gev, "printjoblist: Failure retrieving joblist from SolveEngine.");
+   if( performCurl(se, &root) != RETURN_OK )
       goto TERMINATE;
-   }
-   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure retrieving joblist from SolveEngine:");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      goto TERMINATE;
-   }
-
-   root = cJSON_Parse((char*)se->curlwritebuf.content);
-   if( root == NULL )
-   {
-      gevLogStatPChar(gev, "printjoblist: Failure parsing joblist from SolveEngine. Content: ");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      gevLogStatPChar(gev, "\n");
-      goto TERMINATE;
-   }
+   assert(root != NULL);
 
    total = cJSON_GetObjectItem(root, "total");
    if( total == NULL || !cJSON_IsNumber(total) )
@@ -438,7 +467,6 @@ void printjoblist(
 TERMINATE :
    if( root != NULL )
       cJSON_Delete(root);
-
 }
 
 /* returns job id */
@@ -499,30 +527,9 @@ RETURN submitjob(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   if( se->curlwritebuf.content == NULL )  /* got no output at all */
-   {
-      gevLogStat(gev, "submitjob: Failure submitting job to SolveEngine.");
+   if( performCurl(se, &root) != RETURN_OK )
       goto TERMINATE;
-   }
-   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure submitting job to SolveEngine:");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      goto TERMINATE;
-   }
-
-   root = cJSON_Parse((char*)se->curlwritebuf.content);
-   if( root == NULL )
-   {
-      gevLogStat(gev, "submitjob: Failure parsing response from SolveEngine.");
-      goto TERMINATE;
-   }
+   assert(root != NULL);
 
    id = cJSON_GetObjectItem(root, "id");
    if( id == NULL || !cJSON_IsString(id) )
@@ -570,30 +577,18 @@ RETURN schedulejob(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, "") );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure scheduling job:");
-      if( se->curlwritebuf.content != NULL )
-         gevLogStatPChar(gev, se->curlwritebuf.content);
+   if( performCurl(se, NULL) != RETURN_OK )
       goto TERMINATE;
-   }
 
    if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(se->curlwritebuf.content != NULL);
-      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "schedulejob: Failed to schedule job: ");
       gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
    }
 
    rc = RETURN_OK;
-
 TERMINATE:
    return rc;
 }
@@ -619,32 +614,8 @@ char* jobstatus(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_URL, strbuffer) );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   if( se->curlwritebuf.content == NULL )
-   {
-      gevLogStat(gev, "jobstatus: Error retrieving job status.");
+   if( performCurl(se, &root) != RETURN_OK )
       goto TERMINATE;
-   }
-   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure retrieving job status:");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      goto TERMINATE;
-   }
-
-   root = cJSON_Parse((char*)se->curlwritebuf.content);
-   if( root == NULL )
-   {
-      gevLogStatPChar(gev, "jobstatus: Error parsing job status from answer ");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      gevLogStatPChar(gev, "\n");
-      goto TERMINATE;
-   }
 
    status = cJSON_GetObjectItem(root, "status");
    if( status == NULL || !cJSON_IsString(status) )
@@ -699,32 +670,8 @@ void getsolution(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_NOPROGRESS, 0L) );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   if( se->curlwritebuf.content == NULL )
-   {
-      gevLogStat(gev, "getsolution: Error retrieving solution.");
+   if( performCurl(se, &root) != RETURN_OK )
       goto TERMINATE;
-   }
-   ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure getting solution:");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      goto TERMINATE;
-   }
-
-   root = cJSON_Parse((char*)se->curlwritebuf.content);
-   if( root == NULL )
-   {
-      gevLogStatPChar(gev, "getsolution: Error parsing solution from answer ");
-      gevLogStatPChar(gev, se->curlwritebuf.content);
-      gevLogStatPChar(gev, "\n");
-      goto TERMINATE;
-   }
 
    results = cJSON_GetObjectItem(root, "result");
    if( results == NULL )
@@ -853,23 +800,12 @@ void stopjob(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure stopping job:");
-      if( se->curlwritebuf.content != NULL )
-         gevLogStatPChar(gev, se->curlwritebuf.content);
+   if( performCurl(se, NULL) != RETURN_OK )
       goto TERMINATE;
-   }
 
    if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(se->curlwritebuf.content != NULL);
-      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "stopjob: Failure stopping job: ");
       gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");
@@ -904,23 +840,12 @@ void deletejob(
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_CUSTOMREQUEST, "DELETE") );
 
    /* perform HTTP request */
-   CURL_CHECK( se, curl_easy_perform(se->curl) );
-
-   /* check HTTP response code */
-   CURL_CHECK( se, curl_easy_getinfo(se->curl, CURLINFO_RESPONSE_CODE, &respcode) );
-   if( respcode >= 400 )
-   {
-      gevLogStat(gev, "Failure deleting job:");
-      if( se->curlwritebuf.content != NULL )
-         gevLogStatPChar(gev, se->curlwritebuf.content);
+   if( performCurl(se, NULL) != RETURN_OK )
       goto TERMINATE;
-   }
 
    if( se->curlwritebuf.length > 2 )
    {
       /* something else went wrong */
-      assert(se->curlwritebuf.content != NULL);
-      ((char*)se->curlwritebuf.content)[se->curlwritebuf.length] = '\0';
       gevLogStatPChar(gev, "deletejob: Failure deleting job: ");
       gevLogStatPChar(gev, (char*)se->curlwritebuf.content);
       gevLogStatPChar(gev, "\n");

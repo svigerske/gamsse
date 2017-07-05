@@ -22,6 +22,7 @@
 #include "cJSON.h"
 #include "base64encode.h"
 
+#include "gamsse.h"
 #include "gmomcc.h"
 #include "gevmcc.h"
 #include "optcc.h"
@@ -37,7 +38,7 @@ typedef struct
 
 #define BUFFERINIT {0,0,NULL}
 
-typedef struct
+struct gamsse_s
 {
    gmoHandle_t gmo;
    gevHandle_t gev;
@@ -53,7 +54,7 @@ typedef struct
 
    double      progresslastruntime;
    int         progressisupload;
-} gamsse_t;
+};
 
 /** struct for writing problem into base64-encoded string */
 typedef struct
@@ -877,16 +878,21 @@ TERMINATE : ;
 
 
 int dooptions(
-   gamsse_t*   se,
-   char*       optfilename
+   gamsse_t*   se
 )
 {
    gevHandle_t gev = se->gev;
-   optHandle_t opt = se->opt;
+   optHandle_t opt;
    char buffer[GMS_SSSIZE+30];
    int ival;
    int i;
 
+   if( !optCreate(&se->opt, buffer, sizeof(buffer)) )
+   {
+      gevLogStat(gev, buffer);
+      return 1;
+   }
+   opt = se->opt;
    assert(opt != NULL);
 
    /* gevGetStrOpt(gev, gevNameSysDir, buffer); */ *buffer = '\0';
@@ -917,12 +923,9 @@ int dooptions(
    optEOLOnlySet(opt, 1);
 
    /* initialize options object by getting defaults from options settings file and optionally read user options file */
-   if( optfilename != NULL || gmoOptFile(se->gmo) > 0 )
+   if( gmoOptFile(se->gmo) > 0 )
    {
-      if( optfilename == NULL )
-         gmoNameOptFile(se->gmo, buffer);
-      else
-         strcpy(buffer, optfilename);
+      gmoNameOptFile(se->gmo, buffer);
 
       optEchoSet(opt, 1);
       optReadParameterFile(opt, buffer);
@@ -937,7 +940,7 @@ int dooptions(
             char* key;
             key = strstr(buffer, "apikey");  /* TODO do case insensitive */
             if( key != NULL )
-               strcpy(key+6, " ***hidden***");
+               strcpy(key+6, " ***secret***");
 
             gevLogStat(gev, buffer);
          }
@@ -962,120 +965,104 @@ int dooptions(
    return 0;
 }
 
-int main(
-   int    argc,
-   char** argv
+void se_Create(
+   gamsse_t** se,
+   char*      msgBuf,
+   int        msgBufLen
 )
 {
-   int rc = EXIT_FAILURE;
+   assert(se != NULL);
+
+   *se = (gamsse_t*) malloc(sizeof(gamsse_t));
+}
+
+void se_Free(
+   gamsse_t** se
+)
+{
+   free(*se);
+   *se = NULL;
+}
+
+int se_CallSolver(
+   gamsse_t*  se,
+   void*      gmo
+)
+{
+   int rc = 1;
    char buffer[1024];
    char* status = NULL;
    double reslim, res;
-   gamsse_t se;
 
-   if (argc < 2)
-   {
-      printf("usage: %s <cntrlfile> [<optfile>]\n", argv[0]);
-      return 1;
-   }
+   memset(se, 0, sizeof(gamsse_t));
+   se->gmo = gmo;
+   se->gev = gmoEnvironment(gmo);
 
-   memset(&se, 0, sizeof(gamsse_t));
+   gevLogStat(se->gev, "This is the GAMS link to Satalia SolveEngine.");
 
-   curl_global_init(CURL_GLOBAL_ALL);
+   gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+   gmoSolveStatSet(se->gmo, gmoSolveStat_SystemErr);
 
-   /* GAMS create GMO, GEV, and OPT handles */
-   if( !gmoCreate(&se.gmo, buffer, sizeof(buffer)) || !gevCreate(&se.gev, buffer, sizeof(buffer)) || !optCreate(&se.opt, buffer, sizeof(buffer)) )
-   {
-      fprintf(stderr, "%s\n", buffer);
-      goto TERMINATE;
-   }
-
-   /* GAMS load control file */
-   if( gevInitEnvironmentLegacy(se.gev, argv[1]) )
-   {
-      fprintf(stderr, "Could not load control file %s\n", argv[1]);
-      goto TERMINATE;
-   }
-
-   /* GAMS let gmo know about gev */
-   if( gmoRegisterEnvironment(se.gmo, se.gev, buffer) )
-   {
-      fprintf(stderr, "Error registering GAMS Environment: %s\n", buffer);
-      goto TERMINATE;
-   }
-
-   /* GAMS load instance data */
-   if( gmoLoadDataLegacy(se.gmo, buffer) )
-   {
-      fprintf(stderr, "Could not load model data.\n");
-      goto TERMINATE;
-   }
-
-   gevLogStat(se.gev, "This is the GAMS link to Satalia SolveEngine.");
-
-   gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
-   gmoSolveStatSet(se.gmo, gmoSolveStat_SystemErr);
-
-   if( dooptions(&se, argc >= 3 ? argv[2] : NULL) )
+   if( dooptions(se) )
       goto TERMINATE;
 
-   optGetStrStr(se.opt, "apikey", buffer);
+   optGetStrStr(se->opt, "apikey", buffer);
    if( *buffer == '\0' )
    {
-      gevLogStat(se.gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
+      gevLogStat(se->gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
       goto TERMINATE;
    }
    if( strlen(buffer) > 50 ) /* mine is 45 chars */
    {
-      gevLogStat(se.gev, "Invalid API key: too long. Exiting.");
+      gevLogStat(se->gev, "Invalid API key: too long. Exiting.");
       goto TERMINATE;
    }
-   se.apikey = strdup(buffer);
+   se->apikey = strdup(buffer);
 
-   if( initCurl(&se) != RETURN_OK )
+   if( initCurl(se) != RETURN_OK )
       goto TERMINATE;
 
-   if( optGetIntStr(se.opt, "printjoblist") )
-      printjoblist(&se);
+   if( optGetIntStr(se->opt, "printjoblist") )
+      printjoblist(se);
 
    /* get the problem into a normal form */
-   gmoObjStyleSet(se.gmo, gmoObjType_Fun);
-   gmoObjReformSet(se.gmo, 1);
-   gmoIndexBaseSet(se.gmo, 0);
-   gmoSetNRowPerm(se.gmo); /* hide =N= rows */
+   gmoObjStyleSet(se->gmo, gmoObjType_Fun);
+   gmoObjReformSet(se->gmo, 1);
+   gmoIndexBaseSet(se->gmo, 0);
+   gmoSetNRowPerm(se->gmo); /* hide =N= rows */
 
-   if( submitjob(&se) != RETURN_OK )
+   if( submitjob(se) != RETURN_OK )
       goto TERMINATE;
 
-   if( schedulejob(&se) != RETURN_OK )
+   if( schedulejob(se) != RETURN_OK )
       goto TERMINATE;
 
-   reslim = gevGetDblOpt(se.gev, gevResLim);
-   gevTimeSetStart(se.gev);
+   reslim = gevGetDblOpt(se->gev, gevResLim);
+   gevTimeSetStart(se->gev);
 
    do
    {
       sleep(1);
-      res = gevTimeDiffStart(se.gev);
+      res = gevTimeDiffStart(se->gev);
 
       free(status);
-      status = jobstatus(&se);
+      status = jobstatus(se);
       sprintf(buffer, "%8.1fs Job Status: %s\n", res, status != NULL ? status : "UNKNOWN");
-      gevLogPChar(se.gev, buffer);
+      gevLogPChar(se->gev, buffer);
 
-      if( gevTerminateGet(se.gev) )
+      if( gevTerminateGet(se->gev) )
       {
-         gevLog(se.gev, "User Interrupt.\n");
-         gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
-         gmoSolveStatSet(se.gmo, gmoSolveStat_User);
+         gevLog(se->gev, "User Interrupt.\n");
+         gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(se->gmo, gmoSolveStat_User);
          break;
       }
 
       if( res > reslim )
       {
-         gevLog(se.gev, "Time limit reached.\n");
-         gmoModelStatSet(se.gmo, gmoModelStat_NoSolutionReturned);
-         gmoSolveStatSet(se.gmo, gmoSolveStat_Resource);
+         gevLog(se->gev, "Time limit reached.\n");
+         gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+         gmoSolveStatSet(se->gmo, gmoSolveStat_Resource);
          break;
       }
    }
@@ -1085,53 +1072,58 @@ int main(
      strcmp(status, "started") == 0 ||
      strcmp(status, "starting") == 0) );
 
-   gmoSetHeadnTail(se.gmo, gmoHresused, gevTimeDiffStart(se.gev));
+   gmoSetHeadnTail(se->gmo, gmoHresused, gevTimeDiffStart(se->gev));
 
    /* if job has been completed, then get results */
    if( status != NULL && strcmp(status, "completed") == 0 )
-      getsolution(&se);
+      getsolution(se);
 
    /* if job has been interrupted (Ctrl+C), then stop it */
    if( status != NULL && (strcmp(status, "started") == 0 || strcmp(status, "starting") == 0) )
-      stopjob(&se);
+      stopjob(se);
 
    /* if job has failed, then return solver error (instead of system error) */
    if( status != NULL && strcmp(status, "failed") == 0 )
-      gmoSolveStatSet(se.gmo, gmoSolveStat_SolverErr);
+      gmoSolveStatSet(se->gmo, gmoSolveStat_SolverErr);
 
-   rc = EXIT_SUCCESS;
-
+   rc = 0;
 TERMINATE:
-   if( se.jobid != NULL && optGetIntStr(se.opt, "deletejob") )
-      deletejob(&se);
+   if( se->jobid != NULL && optGetIntStr(se->opt, "deletejob") )
+      deletejob(se);
 
-   if( se.gmo != NULL )
-   {
-      gmoUnloadSolutionLegacy(se.gmo);
-      gmoFree(&se.gmo);
-   }
-   if( se.gev != NULL )
-      gevFree(&se.gev);
+   if( se->opt != NULL )
+      optFree(&se->opt);
 
-   if( se.opt != NULL )
-      optFree(&se.opt);
+   if( se->curlheaders != NULL )
+      curl_slist_free_all(se->curlheaders);
 
-   if( se.curlheaders != NULL )
-      curl_slist_free_all(se.curlheaders);
+   if( se->curl != NULL )
+      curl_easy_cleanup(se->curl);
 
-   if( se.curl != NULL )
-      curl_easy_cleanup(se.curl);
+   exitbuffer(&se->curlwritebuf);
 
-   exitbuffer(&se.curlwritebuf);
-
-   curl_global_cleanup();
-
-   gmoLibraryUnload();
-   gevLibraryUnload();
-
-   free(se.jobid);
-   free(se.apikey);
+   free(se->jobid);
+   free(se->apikey);
    free(status);
 
    return rc;
+}
+
+
+void se_Initialize(void)
+{
+   gmoInitMutexes();
+   gevInitMutexes();
+   optInitMutexes();
+
+   curl_global_init(CURL_GLOBAL_ALL);
+}
+
+void se_Finalize(void)
+{
+   curl_global_cleanup();
+
+   gmoFiniMutexes();
+   gevFiniMutexes();
+   optFiniMutexes();
 }

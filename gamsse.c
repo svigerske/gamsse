@@ -1,5 +1,4 @@
-/* TODO:
- * - trnsport and indus89 answers are wrong (obj correct?)
+/* Satalia SolveEngine link code
  *
  * Links:
  * - https://curl.haxx.se/libcurl/c/libcurl.html
@@ -177,7 +176,7 @@ DECL_convertWriteFunc(appendbufferConvert)
    msglen = strlen(msg);
 
    /* need 4/3*msglen many more bytes in buffer */
-   if( ensurebuffer(&encodeprob->buffer, (int)1.5*msglen+2) < 1.5*msglen )
+   if( ensurebuffer(&encodeprob->buffer, (int)(1.5*msglen)+2) < 1.5*msglen )
       return 0;
 
    cnt = base64_encode_block(msg, msglen, encodeprob->buffer.content + encodeprob->buffer.length, &encodeprob->es);

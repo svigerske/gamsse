@@ -2,6 +2,7 @@
 #define GAMSSE_H_
 
 typedef struct gamsse_s gamsse_t;
+typedef gamsse_t se_Rec_t;  /* for GAMS buildsystem */
 
 #ifdef __cplusplus
 extern "C" {

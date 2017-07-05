@@ -79,6 +79,7 @@ void convertGetEquName(
    sprintf(buffer, "e%d", idx);
 }
 
+#if 0
 static
 RETURN writeStatistics(
    gmoHandle_t gmo,
@@ -165,6 +166,7 @@ RETURN writeStatistics(
 
    return RETURN_OK;
 }
+#endif
 
 static
 void writeBounds(

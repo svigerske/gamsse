@@ -781,7 +781,13 @@ void getsolution(
    }
    else
    {
-      /* TODO what other status could SolveEngine return? (e.g., infeasible) */
+      /* TODO handle other result codes:
+       *
+       * satisfiable (for SAT only)
+       * infeasible
+       * unbounded
+       * error - returned when any kind of error occurs on our side
+       */
       gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
       gmoSolveStatSet(gmo, gmoSolveStat_Normal);
    }

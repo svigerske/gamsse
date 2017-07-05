@@ -887,6 +887,12 @@ int dooptions(
    int ival;
    int i;
 
+   if( !optGetReady(buffer, sizeof(buffer)) )
+   {
+      gevLogStat(gev, buffer);
+      return 1;
+   }
+
    if( !optCreate(&se->opt, buffer, sizeof(buffer)) )
    {
       gevLogStat(gev, buffer);
@@ -993,6 +999,18 @@ int se_CallSolver(
    char buffer[1024];
    char* status = NULL;
    double reslim, res;
+
+   if( !gmoGetReady(buffer, sizeof(buffer)) )
+   {
+      fputs(buffer, stderr);
+      return 1;
+   }
+
+   if( !gevGetReady(buffer, sizeof(buffer)) )
+   {
+      fputs(buffer, stderr);
+      return 1;
+   }
 
    memset(se, 0, sizeof(gamsse_t));
    se->gmo = gmo;

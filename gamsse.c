@@ -509,13 +509,10 @@ RETURN submitjob(
 {
    gevHandle_t gev = se->gev;
    gmoHandle_t gmo = se->gmo;
-   char strbuffer[1024];
    cJSON* root = NULL;
    cJSON* id = NULL;
-   char* idstr = NULL;
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
-   long respcode;
    RETURN rc = RETURN_ERROR;
 
    assert(se->jobid == NULL);
@@ -590,7 +587,6 @@ RETURN schedulejob(
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
    int rc = RETURN_ERROR;
-   long respcode;
 
    gevLogPChar(gev, "Scheduling Job. ID: "); gevLog(gev, se->jobid);
 
@@ -632,7 +628,6 @@ char* jobstatus(
    cJSON* root = NULL;
    cJSON* status = NULL;
    char* statusstr = NULL;
-   long respcode;
 
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;
@@ -675,7 +670,6 @@ void getsolution(
    cJSON* status = NULL;
    cJSON* objval = NULL;
    cJSON* variables = NULL;
-   long respcode;
 
    gevLog(gev, "Retrieving results.");
 
@@ -806,10 +800,6 @@ void stopjob(
 {
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
-   char curlerrbuf[CURL_ERROR_SIZE];
-   CURL* curl = NULL;
-   struct curl_slist* headers = NULL;
-   long respcode;
 
    /* gevLog(gev, "Stop job"); */
 
@@ -845,10 +835,6 @@ void deletejob(
 {
    gevHandle_t gev = se->gev;
    char strbuffer[1024];
-   char curlerrbuf[CURL_ERROR_SIZE];
-   CURL* curl = NULL;
-   struct curl_slist* headers = NULL;
-   long respcode;
 
    /* gevLog(gev, "Deleting job"); */
 

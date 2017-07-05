@@ -722,7 +722,6 @@ void getsolution(
       int i;
       long int varidx;
       char* endptr;
-      char namebuf[GMS_SSSIZE];
 
       variables = cJSON_GetObjectItem(results, "variables");
       if( variables == NULL || !cJSON_IsArray(variables) )
@@ -766,11 +765,14 @@ void getsolution(
 
          gmoSetVarLOne(gmo, varidx, val->valuedouble);
 
+#if 0
          if( gmoN(gmo) < 30 )
          {
+            char namebuf[GMS_SSSIZE];
             sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
             gevLogPChar(gev, strbuffer);
          }
+#endif
       }
 
       gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);

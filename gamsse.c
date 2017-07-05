@@ -862,7 +862,7 @@ void deletejob(
 TERMINATE : ;
 }
 
-
+static
 int dooptions(
    gamsse_t*   se
 )

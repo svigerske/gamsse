@@ -4,20 +4,30 @@
  * - https://curl.haxx.se/libcurl/c/libcurl.html
  * - https://github.com/DaveGamble/cJSON/tree/v1.5.3
  * - http://libb64.sourceforge.net/
+ *
+ * TODO:
+ * - proxy support?
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>  /* for tolower() */
 #include <assert.h>
+#ifndef _WIN32
 #include <unistd.h>  /* for sleep() */
+#endif
+#if 0
 #include <time.h>  /* for strptime */
+#endif
 
 #ifdef _WIN32
 #define timegm _mkgmtime
+#define snprintf _snprintf
+#define strdup _strdup
 #endif
 
-#include "curl/curl.h"
+#include "curl/curl.h"  /* this seems to include some windows headers so that Sleep() becomes available */
 #include "cJSON.h"
 #include "base64encode.h"
 
@@ -45,6 +55,7 @@ struct gamsse_s
    char*       apikey;
    char*       jobid;
    int         debug;
+   int         verifycert;
 
    CURL*       curl;
    char        curlerrbuf[CURL_ERROR_SIZE];   /**< buffer for curl to store error message */
@@ -77,6 +88,36 @@ typedef struct
          goto TERMINATE; \
       } \
    } while( 0 )
+
+#ifdef _WIN32
+void sleep(int sec) { Sleep(sec*1000); }
+#endif
+
+/* like strcasestr, but assumes needle to be in lower-case */
+static
+char* strfind(
+   char* haystack,
+   char* needle
+)
+{
+   char buffer[GMS_SSSIZE];
+   char* pos;
+   int i;
+
+   /* store lower-case version of haystack in buffer */
+   for( i = 0; haystack[i] != '\0'; ++i )
+   {
+      assert(i < sizeof(buffer));
+      buffer[i] = tolower(haystack[i]);
+   }
+   buffer[i] = '\0';
+
+   /* search for needle in buffer */
+   pos = strstr(buffer, needle);
+   if( pos == NULL )
+      return NULL;
+   return haystack + (pos - buffer);
+}
 
 static
 void exitbuffer(
@@ -133,7 +174,7 @@ size_t appendbuffer(
    if( ensurebuffer(buffer, msglen+1) < msglen + 1 )
       return 0; /* there was a problem in increasing the buffer */
 
-   memcpy(buffer->content + buffer->length, msg, msglen+1);  /* include closing '\0', but do not count it into length, so it gets overwritten next */
+   memcpy((char*)buffer->content + buffer->length, msg, msglen+1);  /* include closing '\0', but do not count it into length, so it gets overwritten next */
    buffer->length += msglen;
 
    return msglen;
@@ -154,7 +195,7 @@ size_t appendbufferCurl(
    if( ensurebuffer(buffer, nmemb * size) < nmemb * size )
       return 0; /* there was a problem in increasing the buffer */
 
-   memcpy(buffer->content + buffer->length, curlbuf, nmemb * size);
+   memcpy((char*)buffer->content + buffer->length, curlbuf, nmemb * size);
    buffer->length += nmemb * size;
 
    return nmemb;
@@ -179,7 +220,7 @@ DECL_convertWriteFunc(appendbufferConvert)
    if( ensurebuffer(&encodeprob->buffer, (int)(1.5*msglen)+2) < 1.5*msglen )
       return 0;
 
-   cnt = base64_encode_block(msg, msglen, encodeprob->buffer.content + encodeprob->buffer.length, &encodeprob->es);
+   cnt = base64_encode_block(msg, msglen, (char*)encodeprob->buffer.content + encodeprob->buffer.length, &encodeprob->es);
    encodeprob->buffer.length += cnt;
 
    return msglen;
@@ -229,9 +270,10 @@ char* formattime(
    char*  src      /**< time string to convert, should be in form "2017-06-20T10:25:10Z" */
    )
 {
+#if 0
    time_t seconds;
    struct tm tm;
-
+#endif
    if( src == NULL )
    {
       strcpy(buf, "N/A");
@@ -244,10 +286,12 @@ char* formattime(
       return buf;
    }
 
-   /* convert UTC timestring into struct tm */
+#if 0
+   /* convert UTC timestring into struct tm (not available on Windows...) */
    strptime(src, "%Y-%m-%dT%H:%M:%SZ", &tm);
 
    /* convert struct tm into seconds since epoch */
+   /* timegm is only glibc >= 2.19... */
    /* on Windows, this might be _mkgmtime, https://msdn.microsoft.com/en-us/library/2093ets1.aspx */
    seconds = timegm(&tm);
 
@@ -260,6 +304,9 @@ char* formattime(
 
    /* remove trailing \n */
    buf[strlen(buf)-1] = '\0';
+#else
+   strcpy(buf, src);
+#endif
 
    return buf;
 }
@@ -312,6 +359,12 @@ RETURN resetCurl(
    *se->curlerrbuf = '\0';
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_ERRORBUFFER, se->curlerrbuf) );
 
+   if( se->debug >= 2 )
+   {
+      /* enable curl verbose output */
+      CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_VERBOSE, 1) );
+   }
+
    /* set write buffer */
    se->curlwritebuf.length = 0;
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_WRITEFUNCTION, appendbufferCurl) );
@@ -320,11 +373,8 @@ RETURN resetCurl(
    /* set http header (api key) */
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_HTTPHEADER, se->curlheaders) );
 
-   if( se->debug >= 2 )
-   {
-      /* enable curl verbose output */
-      CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_VERBOSE, 1) );
-   }
+   if( !se->verifycert )
+      CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_SSL_VERIFYPEER, 0) );
 
    rc = RETURN_OK;
 TERMINATE:
@@ -539,7 +589,7 @@ RETURN submitjob(
       gevLogStat(gev, "submitjob: Out-of-memory converting problem.\n");
       goto TERMINATE;
    }
-   encodeprob.buffer.length += base64_encode_blockend(encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
+   encodeprob.buffer.length += base64_encode_blockend((char*)encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
    appendbuffer(&encodeprob.buffer, "\"}]}");
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
 
@@ -764,15 +814,6 @@ void getsolution(
          }
 
          gmoSetVarLOne(gmo, varidx, val->valuedouble);
-
-#if 0
-         if( gmoN(gmo) < 30 )
-         {
-            char namebuf[GMS_SSSIZE];
-            sprintf(strbuffer, "%s = %g\n", gmoGetVarNameOne(gmo, varidx, namebuf), val->valuedouble);
-            gevLogPChar(gev, strbuffer);
-         }
-#endif
       }
 
       gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
@@ -781,17 +822,29 @@ void getsolution(
       gmoSetHeadnTail(gmo, gmoHmarginals, 0);
       gmoCompleteSolution(gmo);
    }
+   else if( strcmp(status->valuestring, "infeasible") == 0 )
+   {
+      gmoModelStatSet(gmo, gmoModelStat_InfeasibleGlobal);
+      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
+   }
+   else if( strcmp(status->valuestring, "unbounded") == 0 )
+   {
+      gmoModelStatSet(gmo, gmoModelStat_UnboundedNoSolution);
+      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
+   }
+   else if( strcmp(status->valuestring, "error") == 0 )
+   {
+      /* some error on Satalia side */
+      gmoModelStatSet(gmo, gmoModelStat_ErrorNoSolution);
+      gmoSolveStatSet(gmo, gmoSolveStat_SolverErr);
+   }
    else
    {
-      /* TODO handle other result codes:
-       *
-       * satisfiable (for SAT only)
-       * infeasible
-       * unbounded
-       * error - returned when any kind of error occurs on our side
+      /* unexpected status code
+       * we didn't check for "satisfiable" above, but this is for SAT only
        */
-      gmoModelStatSet(gmo, gmoModelStat_NoSolutionReturned);
-      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
+      gmoModelStatSet(gmo, gmoModelStat_ErrorNoSolution);
+      gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
    }
 
 TERMINATE :
@@ -910,7 +963,7 @@ int dooptions(
       return 1;
    }
    gevStatCon(gev);
-   for( int i = 1; i <= optMessageCount(opt); ++i)
+   for( i = 1; i <= optMessageCount(opt); ++i)
    {
       optGetMessage(opt, i, buffer, &ival);
       gevLogStat(gev, buffer);
@@ -930,14 +983,14 @@ int dooptions(
       optReadParameterFile(opt, buffer);
       /* Echo */
       gevStatCon(gev);
-      for( int i = 1; i <= optMessageCount(opt); ++i)
+      for( i = 1; i <= optMessageCount(opt); ++i)
       {
          optGetMessage(opt, i, buffer, &ival);
          if( ival <= optMsgFileLeave || ival == optMsgUserError)
          {
             /* don't echo api key log */
             char* key;
-            key = strstr(buffer, "apikey");  /* TODO do case insensitive */
+            key = strfind(buffer, "apikey");
             if( key != NULL )
                strcpy(key+6, " ***secret***");
 
@@ -960,6 +1013,7 @@ int dooptions(
    }
 
    se->debug = optGetIntStr(opt, "debug");
+   se->verifycert = optGetIntStr(opt, "verifycert");
 
    return 0;
 }
@@ -1021,11 +1075,13 @@ int se_CallSolver(
    if( *buffer == '\0' )
    {
       gevLogStat(se->gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
+      rc = 0;
       goto TERMINATE;
    }
    if( strlen(buffer) > 50 ) /* mine is 45 chars */
    {
       gevLogStat(se->gev, "Invalid API key: too long. Exiting.");
+      rc = 0;
       goto TERMINATE;
    }
    se->apikey = strdup(buffer);

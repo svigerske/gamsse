@@ -16,7 +16,8 @@
 
 typedef enum {
     RETURN_OK = 0,
-    RETURN_ERROR = 1
+    RETURN_ERROR = 1,
+    RETURN_ERROR_WRITEFUNC = 2
 } RETURN;
 
 struct gmoRec;
@@ -28,7 +29,7 @@ struct gevRec;
 )
 
 extern
-void convertEndLine(
+RETURN convertEndLine(
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
    char*       linebuffer,
@@ -36,7 +37,7 @@ void convertEndLine(
 );
 
 extern
-void convertAppendLine(
+RETURN convertAppendLine(
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
    char*       linebuffer,

@@ -15,22 +15,27 @@
 
 const char* VARNAMEPREFIX[7] = { "x", "b", "i", "x", "x", "y", "j" };
 
-void convertEndLine(
+RETURN convertEndLine(
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
    char*       linebuffer,
    int*        linecnt
 )
 {
-   /* TODO we should stop if these fail */
-   writefunc(linebuffer, writedata);
-   writefunc("\n", writedata);
+   /* should actually check whether writefunc return is strlen(linebuffer), but the only implementation only returns 0 or strlen(linebuffer) anyway */
+   if( *linebuffer && writefunc(linebuffer, writedata) == 0 )
+      return RETURN_ERROR_WRITEFUNC;
+
+   if( writefunc("\n", writedata) != 1 )
+      return RETURN_ERROR_WRITEFUNC;
 
    *linebuffer = '\0';
    *linecnt = 0;
+
+   return RETURN_OK;
 }
 
-void convertAppendLine(
+RETURN convertAppendLine(
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
    char*       linebuffer,
@@ -44,7 +49,7 @@ void convertAppendLine(
    assert(len < MAX_PRINTLEN);
 
    if( *linecnt + len >= MAX_PRINTLEN )
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
 
    assert(strlen(linebuffer) + len < MAX_PRINTLEN);
    strcat(linebuffer, extension);
@@ -53,9 +58,11 @@ void convertAppendLine(
 
    if( *linecnt > PRINTLEN )
    {
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, "  ");
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "  ") );
    }
+
+   return RETURN_OK;
 }
 
 void convertGetVarName(
@@ -169,7 +176,7 @@ RETURN writeStatistics(
 #endif
 
 static
-void writeBounds(
+RETURN writeBounds(
    gmoHandle_t gmo,
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
@@ -196,19 +203,19 @@ void writeBounds(
 
       if( !printedsecname )
       {
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Bounds");
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Bounds") );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
          printedsecname = 1;
       }
 
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, " ");
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " ") );
 
       if( lb == gmoMinf(gmo) && ub == gmoPinf(gmo) )
       {
          convertGetVarName(gmo, i, buffer);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, " Free");
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " Free") );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
 
          continue;
       }
@@ -219,48 +226,50 @@ void writeBounds(
             strcpy(buffer, "-inf");
          else
             sprintf(buffer, CONVERT_DOUBLEFORMAT, lb);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, " <= ");
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " <= ") );
       }
 
       convertGetVarName(gmo, i, buffer);
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
 
       if( ub != defub || lb == ub )
       {
          if( lb != ub )
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, " <= ");
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " <= ") );
          else
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, " = ");
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " = ") );
          if( ub == gmoPinf(gmo) )
             sprintf(buffer, "+inf");  /* this could only happen for a binary variable with upper bound +inf... very unlikely */
          else
             sprintf(buffer, CONVERT_DOUBLEFORMAT, ub);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
       }
 
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
    }
 
    if( doobjconstant && gmoObjConst(gmo) != 0.0 )
    {
       if( !printedsecname )
       {
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Bounds");
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Bounds") );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
          printedsecname = 1;
       }
       sprintf(buffer, " objconstant = " CONVERT_DOUBLEFORMAT, gmoObjConst(gmo));
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
    }
 
    if( printedsecname )
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
+
+   return RETURN_OK;
 }
 
 static
-void writeVartypes(
+RETURN writeVartypes(
    gmoHandle_t gmo,
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
@@ -282,80 +291,80 @@ void writeVartypes(
 
          if( !printedsecname )
          {
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Binary");
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Binary") );
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
             printedsecname = 1;
          }
 
          buffer[0] = ' ';
          convertGetVarName(gmo, i, buffer+1);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
 
          if( *linecnt > PRINTLEN - 10 )
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
       if( printedsecname )
       {
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
    }
 
-   if( gmoGetVarTypeCnt(gmo, gmovar_I) || gmoGetVarTypeCnt(gmo, gmovar_SI) )
+   if( gmoGetVarTypeCnt(gmo, gmovar_I) )
    {
       printedsecname = 0;
       for( i = 0; i < gmoN(gmo); ++i )
       {
-         if( gmoGetVarTypeOne(gmo, i) != gmovar_I && gmoGetVarTypeOne(gmo, i) != gmovar_SI )
+         if( gmoGetVarTypeOne(gmo, i) != gmovar_I )
             continue;
 
          if( !printedsecname )
          {
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, "General");
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "General") );
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
             printedsecname = 1;
          }
 
          buffer[0] = ' ';
          convertGetVarName(gmo, i, buffer+1);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
 
          if( *linecnt > PRINTLEN - 10 )
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
       if( printedsecname )
       {
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
    }
 
-   if( gmoGetVarTypeCnt(gmo, gmovar_SC) || gmoGetVarTypeCnt(gmo, gmovar_SI) )
+   if( gmoGetVarTypeCnt(gmo, gmovar_SC) )
    {
       printedsecname = 0;
       for( i = 0; i < gmoN(gmo); ++i )
       {
-         if( gmoGetVarTypeOne(gmo, i) != gmovar_SC && gmoGetVarTypeOne(gmo, i) != gmovar_SI )
+         if( gmoGetVarTypeOne(gmo, i) != gmovar_SC )
             continue;
 
          if( !printedsecname )
          {
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Semi");
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "Semi") );
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
             printedsecname = 1;
          }
 
          buffer[0] = ' ';
          convertGetVarName(gmo, i, buffer+1);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
 
          if( *linecnt > PRINTLEN - 10 )
-            convertEndLine(writefunc, writedata, linebuffer, linecnt);
+            CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
       if( printedsecname )
       {
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
    }
 
@@ -382,32 +391,34 @@ void writeVartypes(
 
       gmoGetSosConstraints(gmo, sostype, sosbeg, sosidx, soswt);
 
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, "SOS");
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "SOS") );
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
 
       for( i = 0; i < nsos; ++i )
       {
          sprintf(buffer, " set%03d: S%d::", i, sostype[i]);
-         convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+         CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
 
          for( j = sosbeg[i]; j < sosbeg[i+1]; ++j )
          {
             buffer[0] = ' ';
             convertGetVarName(gmo, sosidx[j], buffer+1);
             sprintf(buffer + strlen(buffer), ":" CONVERT_DOUBLEFORMAT, soswt[j]);
-            convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
          }
 
-         convertEndLine(writefunc, writedata, linebuffer, linecnt);
+         CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
       }
 
-      convertEndLine(writefunc, writedata, linebuffer, linecnt);
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, linecnt) );
    }
+
+   return RETURN_OK;
 }
 
 
 static
-void writeLPFunction(
+RETURN writeLPFunction(
    gmoHandle_t gmo,
    DECL_convertWriteFunc((*writefunc)),
    void*       writedata,
@@ -442,16 +453,16 @@ void writeLPFunction(
       if( i+1 < linnz )
          strcat(buffer, " ");
 
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
    }
 
    if( quadnz == 0 )
-      return;
+      return RETURN_OK;
 
    if( linnz > 0 )
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, " + ");
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, " + ") );
 
-   convertAppendLine(writefunc, writedata, linebuffer, linecnt, "[ ");
+   CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "[ ") );
 
    for( i = 0; i < quadnz; ++i )
    {
@@ -481,10 +492,12 @@ void writeLPFunction(
       }
       strcat(buffer, " ");
 
-      convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, buffer) );
    }
 
-   convertAppendLine(writefunc, writedata, linebuffer, linecnt, "]");
+   CHECK( convertAppendLine(writefunc, writedata, linebuffer, linecnt, "]") );
+
+   return RETURN_OK;
 }
 
 RETURN writeLP(
@@ -522,6 +535,12 @@ RETURN writeLP(
       return RETURN_ERROR;
    }
 
+   if( gmoGetVarTypeCnt(gmo, gmovar_SI) )
+   {
+      fputs("Instance has semi-integer variables, cannot write in .lp format.\n", stderr);
+      return RETURN_ERROR;
+   }
+
    if( gmoGetEquTypeCnt(gmo, gmoequ_C) )
    {
       /* TODO we could reformulate as quadratic */
@@ -541,12 +560,12 @@ RETURN writeLP(
    quadcoef   = (double*) malloc(gmoMaxQNZ(gmo) * sizeof(double));
 
    if( gmoSense(gmo) == gmoObj_Min )
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Minimize");
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Minimize") );
    else
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Maximize");
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Maximize") );
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
-   convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " obj: ");
+   CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " obj: ") );
 
    for( i = 0; i < gmoN(gmo); ++i )
       lincolidx[i] = i;
@@ -575,28 +594,28 @@ RETURN writeLP(
       }
    }
 
-   writeLPFunction(gmo, writefunc, writedata, linebuffer, &linecnt,
+   CHECK( writeLPFunction(gmo, writefunc, writedata, linebuffer, &linecnt,
       lincolidx, lincoef, linnz,
-      quadcolidx, quadrowidx, quadcoef, quadnz);
+      quadcolidx, quadrowidx, quadcoef, quadnz) );
    if( quadnz > 0 )
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "/2");
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "/2") );
 
    if( gmoObjConst(gmo) != 0.0 )
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " + objconstant");
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " + objconstant") );
 
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
-   convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Subject To");
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+   CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "Subject To") );
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
    for( i = 0; i < gmoM(gmo); ++i )
    {
       buffer[0] = ' ';
       convertGetEquName(gmo, i, buffer+1);
       strcat(buffer, ": ");
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, buffer);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, buffer) );
 
       gmoGetRowSparse(gmo, i, lincolidx, lincoef, NULL, &linnz, &nlnz);
       assert(nlnz == 0);
@@ -609,20 +628,20 @@ RETURN writeLP(
          gmoGetRowQ(gmo, i, quadcolidx, quadrowidx, quadcoef);
       }
 
-      writeLPFunction(gmo, writefunc, writedata, linebuffer, &linecnt,
+      CHECK( writeLPFunction(gmo, writefunc, writedata, linebuffer, &linecnt,
          lincolidx, lincoef, linnz,
-         quadcolidx, quadrowidx, quadcoef, quadnz);
+         quadcolidx, quadrowidx, quadcoef, quadnz) );
 
       switch( gmoGetEquTypeOne(gmo, i) )
       {
          case gmoequ_E :
-            convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " = ");
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " = ") );
             break;
          case gmoequ_G :
-            convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " >= ");
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " >= ") );
             break;
          case gmoequ_L :
-            convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " <= ");
+            CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, " <= ") );
             break;
          default :
             /* should have been catched above */
@@ -631,12 +650,12 @@ RETURN writeLP(
       }
 
       sprintf(buffer, CONVERT_DOUBLEFORMAT, gmoGetRhsOne(gmo, i));
-      convertAppendLine(writefunc, writedata, linebuffer, &linecnt, buffer);
+      CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, buffer) );
 
-      convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+      CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
    }
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
    free(lincolidx);
    free(lincoef);
@@ -644,12 +663,12 @@ RETURN writeLP(
    free(quadcolidx);
    free(quadcoef);
 
-   writeBounds(gmo, writefunc, writedata, linebuffer, &linecnt, 1);
+   CHECK( writeBounds(gmo, writefunc, writedata, linebuffer, &linecnt, 1) );
 
-   writeVartypes(gmo, writefunc, writedata, linebuffer, &linecnt);
+   CHECK( writeVartypes(gmo, writefunc, writedata, linebuffer, &linecnt) );
 
-   convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "End");
-   convertEndLine(writefunc, writedata, linebuffer, &linecnt);
+   CHECK( convertAppendLine(writefunc, writedata, linebuffer, &linecnt, "End") );
+   CHECK( convertEndLine(writefunc, writedata, linebuffer, &linecnt) );
 
    return RETURN_OK;
 }

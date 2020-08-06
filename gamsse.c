@@ -4,9 +4,6 @@
  * - https://curl.haxx.se/libcurl/c/libcurl.html
  * - https://github.com/DaveGamble/cJSON/tree/v1.5.3
  * - http://libb64.sourceforge.net/
- *
- * TODO:
- * - proxy support?
  */
 
 #include <stdio.h>
@@ -35,6 +32,7 @@
 #include "gmomcc.h"
 #include "gevmcc.h"
 #include "optcc.h"
+#include "palmcc.h"
 
 #include "convert.h"
 
@@ -56,6 +54,7 @@ struct gamsse_s
    char*       jobid;
    int         debug;
    int         verifycert;
+   double      hardtimelimit;
 
    CURL*       curl;
    char        curlerrbuf[CURL_ERROR_SIZE];   /**< buffer for curl to store error message */
@@ -107,7 +106,7 @@ char* strfind(
    /* store lower-case version of haystack in buffer */
    for( i = 0; haystack[i] != '\0'; ++i )
    {
-      assert(i < sizeof(buffer));
+      assert(i < (int)sizeof(buffer));
       buffer[i] = tolower(haystack[i]);
    }
    buffer[i] = '\0';
@@ -527,7 +526,6 @@ void printjoblist(
 
       status = cJSON_GetObjectItem(job, "status");
       algo = cJSON_GetObjectItem(job, "algorithm");
-      status = cJSON_GetObjectItem(job, "status");
       submitted = cJSON_GetObjectItem(job, "submitted");
       started = cJSON_GetObjectItem(job, "started");
       finished = cJSON_GetObjectItem(job, "finished");
@@ -563,10 +561,22 @@ RETURN submitjob(
    char* postfields = NULL;
    encodeprob_t encodeprob = { .buffer = BUFFERINIT };
    RETURN rc = RETURN_ERROR;
+   RETURN rc_writelp;
+   int timelimit;
+   char strbuffer[GMS_SSSIZE];
 
    assert(se->jobid == NULL);
 
-   gevLog(gev, "Submitting Job.");
+   /* SolveEngine time limit must be integer and >= 60 */
+   timelimit = (int)gevGetDblOpt(se->gev, gevResLim);
+   if( timelimit < 60 )
+   {
+      gevLog(gev, "SolveEngine requires a time limit (reslim) of at least 60 seconds.");
+      timelimit = 60;
+   }
+
+   sprintf(strbuffer, "Submitting Job with %d seconds time limit.", timelimit);
+   gevLog(gev, strbuffer);
 
    if( resetCurl(se) != RETURN_OK )
       goto TERMINATE;
@@ -579,9 +589,15 @@ RETURN submitjob(
 
    /* append base64 encode of string in LP format (this will not be 0-terminated) */
    base64_init_encodestate(&encodeprob.es);
-   if( writeLP(gmo, gev, appendbufferConvert, &encodeprob) != RETURN_OK )
+   rc_writelp = writeLP(gmo, gev, appendbufferConvert, &encodeprob);
+   if( rc_writelp == RETURN_ERROR_WRITEFUNC )
    {
-      gevLogStat(gev, "submitjob: Error converting problem.\n");
+      gevLogStat(gev, "submitjob: Error converting problem to Base-64 .lp string representation. Probably out-of-memory.\n");
+      goto TERMINATE;
+   }
+   else if( rc_writelp != RETURN_OK )
+   {
+      gevLogStat(gev, "submitjob: Error converting problem to .lp string representation.\n");
       goto TERMINATE;
    }
    if( ensurebuffer(&encodeprob.buffer, 6) < 6 )  /* 2 for blockend, 4 for terminating "}]} */
@@ -590,7 +606,14 @@ RETURN submitjob(
       goto TERMINATE;
    }
    encodeprob.buffer.length += base64_encode_blockend((char*)encodeprob.buffer.content + encodeprob.buffer.length, &encodeprob.es);
-   appendbuffer(&encodeprob.buffer, "\"}]}");
+
+   /* append closing parenthesis and start of timeout attribute */
+   appendbuffer(&encodeprob.buffer, "\"}],\"timeout\": ");
+
+   /* append timelimit (in seconds as integer), must be >= 60 */
+   ensurebuffer(&encodeprob.buffer, 20);
+   encodeprob.buffer.length += sprintf((char*)encodeprob.buffer.content + encodeprob.buffer.length, "%d}", timelimit);
+
    CURL_CHECK( se, curl_easy_setopt(se->curl, CURLOPT_POSTFIELDS, encodeprob.buffer.content) );
 
    /* get a progress report since this can take time for larger problems */
@@ -764,7 +787,8 @@ void getsolution(
       gevLogStatPChar(gev, strbuffer);
    }
 
-   if( strcmp(status->valuestring, "optimal") == 0 )
+   variables = cJSON_GetObjectItem(results, "variables");
+   if( variables != NULL && cJSON_IsArray(variables) )
    {
       cJSON* varvalpair;
       cJSON* varname;
@@ -773,16 +797,11 @@ void getsolution(
       long int varidx;
       char* endptr;
 
-      variables = cJSON_GetObjectItem(results, "variables");
-      if( variables == NULL || !cJSON_IsArray(variables) )
-      {
-         gevLogStat(gev, "getsolution: No 'variables' array in optimal solution report from SolveEngine.\n");
-         goto TERMINATE;
-      }
+      gevLog(gev, "Solution available.");
 
       if( cJSON_GetArraySize(variables) != gmoN(gmo) )
       {
-         sprintf(strbuffer, "Number of variables in solution (%d) does not match GAMS instance (%d)\n", cJSON_GetArraySize(variables), gmoN(gmo));
+         sprintf(strbuffer, "Number of variables in solution (%d) does not match GAMS instance (%d).", cJSON_GetArraySize(variables), gmoN(gmo));
          gevLogStat(gev, strbuffer);
          goto TERMINATE;
       }
@@ -795,14 +814,14 @@ void getsolution(
          varname = cJSON_GetObjectItem(varvalpair, "name");
          if( varname == NULL || !cJSON_IsString(varname) || strlen(varname->valuestring) < 2 )
          {
-            gevLogStat(gev, "getsolution: No 'name' in variable result.\n");
+            gevLogStat(gev, "getsolution: No 'name' in variable result.");
             goto TERMINATE;
          }
 
          val = cJSON_GetObjectItem(varvalpair, "value");
          if( val == NULL || !cJSON_IsNumber(val) )
          {
-            gevLogStat(gev, "getsolution: No 'value' in variable result.\n");
+            gevLogStat(gev, "getsolution: No 'value' in variable result.");
             goto TERMINATE;
          }
 
@@ -816,11 +835,25 @@ void getsolution(
          gmoSetVarLOne(gmo, varidx, val->valuedouble);
       }
 
-      gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
-      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
-
       gmoSetHeadnTail(gmo, gmoHmarginals, 0);
       gmoCompleteSolution(gmo);
+      /* set mipbest (dual bound) to objval (primal bound), as we believe to be optimal */
+      gmoSetHeadnTail(gmo, gmoTmipbest, gmoGetHeadnTail(gmo, gmoHobjval));
+   }
+   else
+   {
+      gevLog(gev, "No solution available.");
+   }
+
+   if( strcmp(status->valuestring, "optimal") == 0 )
+   {
+      gmoModelStatSet(gmo, gmoModelStat_OptimalGlobal);
+      gmoSolveStatSet(gmo, gmoSolveStat_Normal);
+   }
+   else if( strcmp(status->valuestring, "timeout") == 0 ) /* ??? cannot get here so far */
+   {
+      gmoModelStatSet(gmo, gmoNDisc(gmo) > 0 ? gmoModelStat_Integer : gmoModelStat_Feasible);
+      gmoSolveStatSet(gmo, gmoSolveStat_Resource);
    }
    else if( strcmp(status->valuestring, "infeasible") == 0 )
    {
@@ -832,7 +865,7 @@ void getsolution(
       gmoModelStatSet(gmo, gmoModelStat_UnboundedNoSolution);
       gmoSolveStatSet(gmo, gmoSolveStat_Normal);
    }
-   else if( strcmp(status->valuestring, "error") == 0 )
+   else if( strcmp(status->valuestring, "error") == 0 || strcmp(status->valuestring, "unknown") == 0 )
    {
       /* some error on Satalia side */
       gmoModelStatSet(gmo, gmoModelStat_ErrorNoSolution);
@@ -843,6 +876,7 @@ void getsolution(
       /* unexpected status code
        * we didn't check for "satisfiable" above, but this is for SAT only
        */
+      gevLogStat(gev, "Unexpected status code.");
       gmoModelStatSet(gmo, gmoModelStat_ErrorNoSolution);
       gmoSolveStatSet(gmo, gmoSolveStat_SystemErr);
    }
@@ -947,7 +981,7 @@ int dooptions(
    opt = se->opt;
    assert(opt != NULL);
 
-   /* gevGetStrOpt(gev, gevNameSysDir, buffer); */ *buffer = '\0';
+   gevGetStrOpt(gev, gevNameSysDir, buffer);
    strcat(buffer, "optsolveengine.def");
 
    if( optReadDefinition(opt, buffer) )
@@ -1014,6 +1048,7 @@ int dooptions(
 
    se->debug = optGetIntStr(opt, "debug");
    se->verifycert = optGetIntStr(opt, "verifycert");
+   se->hardtimelimit = optGetDblStr(opt, "hardtimelimit");
 
    return 0;
 }
@@ -1042,10 +1077,10 @@ int se_CallSolver(
    void*      gmo
 )
 {
-   int rc = 1;
    char buffer[1024];
    char* status = NULL;
-   double reslim, res;
+   double res;
+   palHandle_t pal;
 
    if( !gmoGetReady(buffer, sizeof(buffer)) )
    {
@@ -1063,25 +1098,50 @@ int se_CallSolver(
    se->gmo = gmo;
    se->gev = gmoEnvironment(gmo);
 
-   gevLogStat(se->gev, "This is the GAMS link to Satalia SolveEngine.");
+   /* gevLogStat(se->gev, "This is the GAMS link to Satalia SolveEngine."); */
 
-   gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+   /* initialize auditing/licensing library */
+   if( !palCreate(&pal, buffer, sizeof(buffer)) )
+   {
+      gevLogStatPChar(se->gev, "*** Could not create licensing object: ");
+      gevLogStat(se->gev, buffer);
+   }
+   else
+   {
+      /* print GAMS audit line */
+      char auditLine[GMS_SSSIZE];
+      palSetSystemName(pal, "SolveEngine");
+      sprintf(buffer, "\n%s\n", palGetAuditLine(pal, auditLine));
+      gevLog(se->gev, buffer);
+      gevStatAudit(se->gev, palGetAuditLine(pal, auditLine));
+      palFree(&pal);
+   }
+
+   gmoModelStatSet(se->gmo, gmoModelStat_ErrorNoSolution);
    gmoSolveStatSet(se->gmo, gmoSolveStat_SystemErr);
 
    if( dooptions(se) )
       goto TERMINATE;
 
+   if( gmoGetVarTypeCnt(gmo, gmovar_SI) )
+   {
+      gevLogStat(se->gev, "Semi-integer variables not supported.\n");
+      gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+      gmoSolveStatSet(se->gmo, gmoSolveStat_Capability);
+      goto TERMINATE;
+   }
+
    optGetStrStr(se->opt, "apikey", buffer);
    if( *buffer == '\0' )
    {
       gevLogStat(se->gev, "No SolveEngine API key found in options file (option 'apikey') or environment (SOLVEENGINE_APIKEY). Exiting.");
-      rc = 0;
+      gmoModelStatSet(se->gmo, gmoModelStat_ErrorNoSolution);
+      gmoSolveStatSet(se->gmo, gmoSolveStat_License);
       goto TERMINATE;
    }
    if( strlen(buffer) > 50 ) /* mine is 45 chars */
    {
       gevLogStat(se->gev, "Invalid API key: too long. Exiting.");
-      rc = 0;
       goto TERMINATE;
    }
    se->apikey = strdup(buffer);
@@ -1104,7 +1164,6 @@ int se_CallSolver(
    if( schedulejob(se) != RETURN_OK )
       goto TERMINATE;
 
-   reslim = gevGetDblOpt(se->gev, gevResLim);
    gevTimeSetStart(se->gev);
 
    do
@@ -1125,15 +1184,16 @@ int se_CallSolver(
          break;
       }
 
-      if( res > reslim )
+      if( res > se->hardtimelimit )
       {
-         gevLog(se->gev, "Time limit reached.\n");
+         gevLog(se->gev, "Hard time limit reached.\n");
          gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
          gmoSolveStatSet(se->gmo, gmoSolveStat_Resource);
          break;
       }
    }
    while( status != NULL && (
+     strcmp(status, "created") == 0 ||  /* we should not get status "created" after having submitted the job, but it seems to happen anyway; hopefully we just have to wait a bit */
      strcmp(status, "queued") == 0 ||   /* if queued, then we wait for available resources - hope that this wouldn't take too long */
      strcmp(status, "translating") == 0 ||
      strcmp(status, "started") == 0 ||
@@ -1145,6 +1205,14 @@ int se_CallSolver(
    if( status != NULL && strcmp(status, "completed") == 0 )
       getsolution(se);
 
+   /* if job has reached timeout, then set status accordingly */
+   if( status != NULL && (strcmp(status, "timeout") == 0 ) )
+   {
+      /* cannot get any solution in this case... */
+      gmoModelStatSet(se->gmo, gmoModelStat_NoSolutionReturned);
+      gmoSolveStatSet(se->gmo, gmoSolveStat_Resource);
+   }
+
    /* if job has been interrupted (Ctrl+C), then stop it */
    if( status != NULL && (strcmp(status, "started") == 0 || strcmp(status, "starting") == 0) )
       stopjob(se);
@@ -1153,7 +1221,6 @@ int se_CallSolver(
    if( status != NULL && strcmp(status, "failed") == 0 )
       gmoSolveStatSet(se->gmo, gmoSolveStat_SolverErr);
 
-   rc = 0;
 TERMINATE:
    if( se->jobid != NULL && optGetIntStr(se->opt, "deletejob") )
       deletejob(se);
@@ -1173,7 +1240,7 @@ TERMINATE:
    free(se->apikey);
    free(status);
 
-   return rc;
+   return 0;
 }
 
 
@@ -1182,6 +1249,7 @@ void se_Initialize(void)
    gmoInitMutexes();
    gevInitMutexes();
    optInitMutexes();
+   palInitMutexes();
 
    curl_global_init(CURL_GLOBAL_ALL);
 }
@@ -1193,4 +1261,5 @@ void se_Finalize(void)
    gmoFiniMutexes();
    gevFiniMutexes();
    optFiniMutexes();
+   palFiniMutexes();
 }

@@ -1,6 +1,6 @@
 all : gamsse
 
-gamsse : main.o gamsse.o convert.o cJSON.o base64encode.o gmomcc.o gevmcc.o optcc.o
+gamsse : main.o gamsse.o convert.o cJSON.o base64encode.o gmomcc.o gevmcc.o optcc.o palmcc.o
 
 clean:
 	rm -f *.o gamsse

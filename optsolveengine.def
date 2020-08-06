@@ -3,9 +3,11 @@
 *
 
 apikey string 0 "" 1 1 Satalia SolveEngine API key
+hardtimelimit double 0 maxdouble 0 maxdouble 1 1 Hard timelimit that is applied to the time since the job has been submitted. If the job does not finish within this limit, it will be canceled by the GAMS/SolveEngine link.
 printjoblist boolean 0 0 1 1 Prints list of SolveEngine jobs
 debug integer 0 0 0 2 1 1 Enabling debug output
-deletejob boolean 0 1 1 1 Whether to delete job at termination
+deletejob boolean 0 1 0 1 Whether to delete job at termination
+verifycert boolean 0 1 1 1 Whether to verify SSL certificate using the machines CA certificates storage
 nobounds immediate nobounds 0 1 ignores bounds on options
 readfile immediate readfile 0 1 read secondary option file
 *
